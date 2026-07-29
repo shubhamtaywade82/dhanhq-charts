@@ -13,6 +13,7 @@ interface ChartProps {
   interval: string;
   showIndicators?: boolean;
   livePrice?: number;
+  customCandles?: any[];
 }
 
 export const TradingViewChart: React.FC<ChartProps> = ({
@@ -20,6 +21,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
   interval,
   showIndicators = true,
   livePrice,
+  customCandles,
 }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -82,16 +84,21 @@ export const TradingViewChart: React.FC<ChartProps> = ({
         setIsLoading(true);
         setError(null);
 
-        const res = await fetch(
-          `/api/charts/intraday?symbol=${encodeURIComponent(symbol)}&interval=${interval}`
-        );
-        const json = await res.json();
+        let candlesArray: any[] = [];
+        if (customCandles && customCandles.length > 0) {
+          candlesArray = customCandles;
+        } else {
+          const res = await fetch(
+            `/api/charts/intraday?symbol=${encodeURIComponent(symbol)}&interval=${interval}`
+          );
+          const json = await res.json();
+          if (!res.ok || !json.candles || json.candles.length === 0) {
+            throw new Error(json.error || "Failed to load candle data");
+          }
+          candlesArray = json.candles;
+        }
 
         if (!isSubscribed) return;
-
-        if (!res.ok || !json.candles || json.candles.length === 0) {
-          throw new Error(json.error || "Failed to load candle data");
-        }
 
         if (chartContainerRef.current) {
           chartContainerRef.current.innerHTML = "";
@@ -149,7 +156,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
         });
         volumeSeriesRef.current = volumeSeries;
 
-        const formattedCandles = json.candles.map((c: any) => ({
+        const formattedCandles = candlesArray.map((c: any) => ({
           time: Number(c.time),
           open: Number(c.open),
           high: Number(c.high),
@@ -196,7 +203,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
 
         // Subscribe to Scroll Events for Backward Lazy Loading
         chart.timeScale().subscribeVisibleLogicalRangeChange(async (newRange: any) => {
-          if (!newRange || isFetchingHistoricalRef.current) return;
+          if (!newRange || isFetchingHistoricalRef.current || (customCandles && customCandles.length > 0)) return;
 
           if (newRange.from < 5) {
             isFetchingHistoricalRef.current = true;
@@ -277,7 +284,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
         chart.remove();
       }
     };
-  }, [symbol, interval, showIndicators]);
+  }, [symbol, interval, showIndicators, customCandles]);
 
   // 3. Smooth Price AND Volume Lerp Animation Loop (60fps requestAnimationFrame)
   useEffect(() => {

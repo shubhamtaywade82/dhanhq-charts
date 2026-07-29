@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import TradingViewChart from "./components/TradingViewChart";
 import MarketDepthStream from "./components/MarketDepthStream";
+import ExpiredOptionsTable from "./components/ExpiredOptionsTable";
 
 interface TickData {
   symbol: string;
@@ -117,25 +118,199 @@ export function App() {
   }, [selectedExpiry]);
 
   const [expiredResult, setExpiredResult] = useState<any>(null);
+  const [expiredViewMode, setExpiredViewMode] = useState<"CHART" | "TABLE" | "SPLIT">("CHART");
+  const [showRawJson, setShowRawJson] = useState(false);
   const [ledger, setLedger] = useState<any>(null);
   const [killSwitchActive, setKillSwitchActive] = useState(false);
   const [loading, setLoading] = useState(false);
   const [optionError, setOptionError] = useState<string | null>(null);
 
-  // Expired options form inputs
+  // Expired options form inputs (Defaults to 35 days for a full 1 month historical series)
   const [expiredForm, setExpiredForm] = useState({
     securityId: "13",
     exchangeSegment: "NSE_FNO",
-    instrument: "INDEX",
+    instrument: "OPTIDX",
     expiryFlag: "WEEK",
     expiryCode: "1",
     strike: "ATM",
     drvOptionType: "CALL",
     interval: "15",
     requiredData: ["open", "high", "low", "close", "volume"],
-    fromDate: "2026-07-01",
+    fromDate: "2026-06-24",
     toDate: "2026-07-28",
   });
+
+  const setExpiredDatePreset = (days: number) => {
+    const to = expiredForm.toDate || session?.lastCompletedTradingDay || new Date().toISOString().split("T")[0];
+    const toDateObj = new Date(to);
+    const fromDateObj = new Date(toDateObj.getTime() - days * 24 * 60 * 60 * 1000);
+    const from = fromDateObj.toISOString().split("T")[0];
+    setExpiredForm((prev) => ({
+      ...prev,
+      fromDate: from,
+      toDate: to,
+    }));
+  };
+
+  // Compute parsed candle array for Expired Options Rolling Chart
+  const expiredCandles = useMemo(() => {
+    if (!expiredResult) return [];
+
+    // Extract root data from response wrapper
+    const root = expiredResult.data !== undefined ? expiredResult.data : expiredResult;
+    let target = root.data !== undefined && root.data !== null ? root.data : root;
+
+    // Handle nested option branches if present
+    if (target && (target.ce || target.pe)) {
+      target = expiredForm.drvOptionType === "CALL" ? (target.ce || target) : (target.pe || target);
+    }
+
+    if (!target) return [];
+
+    const candles: any[] = [];
+
+    // Case 1: Column-wise arrays (DhanHQ API standard for rolling options)
+    const timeArray = target.start_Time || target.timestamp || target.time || target.t;
+    const closeArray = target.close || target.c;
+    const openArray = target.open || target.o;
+    const highArray = target.high || target.h;
+    const lowArray = target.low || target.l;
+    const volumeArray = target.volume || target.v;
+
+    if (Array.isArray(closeArray) && closeArray.length > 0) {
+      for (let i = 0; i < closeArray.length; i++) {
+        const closeVal = Number(closeArray[i]);
+        if (isNaN(closeVal) || closeVal === 0) continue;
+
+        let rawTime = timeArray ? timeArray[i] : undefined;
+        let timeNum: number;
+        if (typeof rawTime === "number") {
+          timeNum = rawTime > 1e11 ? Math.floor(rawTime / 1000) : rawTime;
+        } else if (typeof rawTime === "string") {
+          const parsed = Date.parse(rawTime);
+          timeNum = !isNaN(parsed) ? Math.floor(parsed / 1000) : Math.floor(Date.now() / 1000);
+        } else {
+          timeNum = Math.floor(Date.now() / 1000) - (closeArray.length - i) * (Number(expiredForm.interval) || 15) * 60;
+        }
+
+        const openVal = openArray && openArray[i] !== undefined ? Number(openArray[i]) : closeVal;
+        const highVal = highArray && highArray[i] !== undefined ? Number(highArray[i]) : Math.max(openVal, closeVal);
+        const lowVal = lowArray && lowArray[i] !== undefined ? Number(lowArray[i]) : Math.min(openVal, closeVal);
+        const volVal = volumeArray && volumeArray[i] !== undefined ? Number(volumeArray[i]) : 0;
+
+        candles.push({
+          time: timeNum,
+          open: openVal,
+          high: highVal,
+          low: lowVal,
+          close: closeVal,
+          volume: volVal,
+        });
+      }
+    } else if (Array.isArray(target)) {
+      // Case 2: Row-wise candle objects
+      for (const item of target) {
+        if (!item || typeof item !== "object") continue;
+        const closeVal = Number(item.close ?? item.c);
+        if (isNaN(closeVal) || closeVal === 0) continue;
+
+        let rawTime = item.timestamp ?? item.start_Time ?? item.time ?? item.t;
+        let timeNum: number;
+        if (typeof rawTime === "number") {
+          timeNum = rawTime > 1e11 ? Math.floor(rawTime / 1000) : rawTime;
+        } else if (typeof rawTime === "string") {
+          const parsed = Date.parse(rawTime);
+          timeNum = !isNaN(parsed) ? Math.floor(parsed / 1000) : Math.floor(Date.now() / 1000);
+        } else {
+          timeNum = Math.floor(Date.now() / 1000);
+        }
+
+        const openVal = Number(item.open ?? item.o ?? closeVal);
+        const highVal = Number(item.high ?? item.h ?? Math.max(openVal, closeVal));
+        const lowVal = Number(item.low ?? item.l ?? Math.min(openVal, closeVal));
+        const volVal = Number(item.volume ?? item.v ?? 0);
+
+        candles.push({
+          time: timeNum,
+          open: openVal,
+          high: highVal,
+          low: lowVal,
+          close: closeVal,
+          volume: volVal,
+        });
+      }
+    }
+
+    // Deduplicate timestamps & sort ascending
+    const uniqueMap = new Map<number, any>();
+    for (const c of candles) {
+      uniqueMap.set(c.time, c);
+    }
+    return Array.from(uniqueMap.values()).sort((a, b) => a.time - b.time);
+  }, [expiredResult, expiredForm.drvOptionType, expiredForm.interval]);
+
+  // Compute Spot Price, ATM Strike, Target Strike, and Moneyness
+  const scripSpotInfo = useMemo(() => {
+    const sym = selectedSymbol.toLowerCase();
+    let spot = tick?.ltp || optionChain?.spotPrice || 0;
+    if (!spot) {
+      if (sym === "nifty") spot = 24850;
+      else if (sym === "banknifty") spot = 52400;
+      else if (sym === "sensex") spot = 81200;
+      else if (sym === "reliance") spot = 3120;
+      else if (sym === "hdfcbank") spot = 1640;
+      else if (sym === "tcs") spot = 4250;
+      else if (sym === "infy") spot = 1850;
+      else spot = 20000;
+    }
+
+    let step = 50;
+    if (sym === "banknifty" || sym === "sensex") step = 100;
+    else if (sym === "reliance" || sym === "tcs") step = 20;
+    else if (sym === "hdfcbank" || sym === "infy") step = 10;
+
+    const atmStrike = Math.round(spot / step) * step;
+
+    let calculatedStrike = atmStrike;
+    let offset = 0;
+    const strInput = (expiredForm.strike || "ATM").toUpperCase().trim();
+
+    if (strInput.startsWith("ATM")) {
+      const match = strInput.match(/ATM([+-]?\d+)?/);
+      if (match && match[1]) {
+        offset = parseInt(match[1], 10) || 0;
+      }
+      calculatedStrike = atmStrike + offset * step;
+    } else {
+      const parsedNum = parseFloat(strInput);
+      if (!isNaN(parsedNum) && parsedNum > 0) {
+        calculatedStrike = parsedNum;
+        offset = Math.round((parsedNum - atmStrike) / step);
+      }
+    }
+
+    const optionType = expiredForm.drvOptionType;
+    let moneynessTag = "ATM (At-The-Money)";
+    if (calculatedStrike < atmStrike) {
+      moneynessTag = optionType === "CALL" ? "ITM (In-The-Money)" : "OTM (Out-Of-The-Money)";
+    } else if (calculatedStrike > atmStrike) {
+      moneynessTag = optionType === "CALL" ? "OTM (Out-Of-The-Money)" : "ITM (In-The-Money)";
+    }
+
+    const diffFromSpot = calculatedStrike - spot;
+    const diffPct = spot > 0 ? (diffFromSpot / spot) * 100 : 0;
+
+    return {
+      spot,
+      step,
+      atmStrike,
+      calculatedStrike,
+      offset,
+      moneynessTag,
+      diffFromSpot,
+      diffPct,
+    };
+  }, [selectedSymbol, tick, optionChain, expiredForm.strike, expiredForm.drvOptionType]);
 
   // Dynamic sync expired options parameters when selectedSymbol or session updates
   useEffect(() => {
@@ -145,7 +320,7 @@ export function App() {
         ...prev,
         securityId: config.id,
         exchangeSegment: config.segment,
-        instrument: config.instrument,
+        instrument: config.instrument === "INDEX" ? "OPTIDX" : config.instrument,
       }));
     }
   }, [selectedSymbol]);
@@ -154,7 +329,7 @@ export function App() {
     if (session?.lastCompletedTradingDay) {
       const to = session.lastCompletedTradingDay;
       const toDateObj = new Date(to);
-      const fromDateObj = new Date(toDateObj.getTime() - 28 * 24 * 60 * 60 * 1000);
+      const fromDateObj = new Date(toDateObj.getTime() - 35 * 24 * 60 * 60 * 1000);
       const from = fromDateObj.toISOString().split("T")[0];
       setExpiredForm((prev) => ({
         ...prev,
@@ -756,17 +931,30 @@ export function App() {
           {/* TAB 3: EXPIRED OPTIONS BACKTEST */}
           {activeTab === "expired" && (
             <div className="glass-panel" style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "20px" }}>
-              <div style={{ fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                   <Database size={18} color="var(--accent-cyan)" />
                   <span>Expired Options Rolling Chart Historical Query Builder</span>
                 </div>
-                <div style={{ fontSize: "12px", background: "rgba(0,229,255,0.1)", border: "1px solid var(--accent-cyan)", padding: "4px 10px", borderRadius: "6px", color: "var(--accent-cyan)" }} className="mono">
-                  ACTIVE SCRIP: {selectedSymbol.toUpperCase()} (ID: {expiredForm.securityId})
+
+                {/* SPOT PRICE & ATM BADGES */}
+                <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                  <div style={{ fontSize: "11px", background: "rgba(0,229,255,0.1)", border: "1px solid var(--accent-cyan)", padding: "4px 10px", borderRadius: "6px", color: "var(--accent-cyan)" }} className="mono">
+                    SCRIP: {selectedSymbol.toUpperCase()} (ID: {expiredForm.securityId})
+                  </div>
+                  <div style={{ fontSize: "11px", background: "rgba(0,245,160,0.1)", border: "1px solid var(--accent-green)", padding: "4px 10px", borderRadius: "6px", color: "var(--accent-green)" }} className="mono">
+                    SPOT: ₹{scripSpotInfo.spot.toFixed(2)}
+                  </div>
+                  <div style={{ fontSize: "11px", background: "rgba(255,255,255,0.06)", border: "1px solid var(--border-color)", padding: "4px 10px", borderRadius: "6px", color: "white" }} className="mono">
+                    ATM: {scripSpotInfo.atmStrike}
+                  </div>
+                  <div style={{ fontSize: "11px", background: "rgba(255,184,0,0.12)", border: "1px solid #FFB800", padding: "4px 10px", borderRadius: "6px", color: "#FFB800" }} className="mono">
+                    TARGET: {scripSpotInfo.calculatedStrike} {expiredForm.drvOptionType} ({scripSpotInfo.moneynessTag.split(" ")[0]})
+                  </div>
                 </div>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: "12px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px" }}>
                 <div>
                   <label style={{ fontSize: "11px", color: "var(--text-muted)" }}>SECURITY ID</label>
                   <input
@@ -786,15 +974,19 @@ export function App() {
                   >
                     <option value="WEEK">WEEK</option>
                     <option value="MONTH">MONTH</option>
+                    <option value="WEEKLY">WEEKLY</option>
+                    <option value="MONTHLY">MONTHLY</option>
                   </select>
                 </div>
 
                 <div>
-                  <label style={{ fontSize: "11px", color: "var(--text-muted)" }}>STRIKE</label>
+                  <label style={{ fontSize: "11px", color: "var(--text-muted)" }}>EXPIRY CODE</label>
                   <input
-                    type="text"
-                    value={expiredForm.strike}
-                    onChange={(e) => setExpiredForm({ ...expiredForm, strike: e.target.value })}
+                    type="number"
+                    min="1"
+                    max="10"
+                    value={expiredForm.expiryCode}
+                    onChange={(e) => setExpiredForm({ ...expiredForm, expiryCode: e.target.value })}
                     style={{ width: "100%", padding: "8px", background: "var(--bg-card)", border: "1px solid var(--border-color)", borderRadius: "6px", color: "white", fontFamily: "var(--font-mono)" }}
                   />
                 </div>
@@ -808,6 +1000,32 @@ export function App() {
                   >
                     <option value="CALL">CALL</option>
                     <option value="PUT">PUT</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: "11px", color: "var(--text-muted)" }}>STRIKE PRESET / VALUE</label>
+                  <input
+                    type="text"
+                    value={expiredForm.strike}
+                    onChange={(e) => setExpiredForm({ ...expiredForm, strike: e.target.value })}
+                    placeholder="e.g. ATM, ATM+1, 24850"
+                    style={{ width: "100%", padding: "8px", background: "var(--bg-card)", border: "1px solid var(--border-color)", borderRadius: "6px", color: "white", fontFamily: "var(--font-mono)" }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: "11px", color: "var(--text-muted)" }}>CANDLE INTERVAL</label>
+                  <select
+                    value={expiredForm.interval}
+                    onChange={(e) => setExpiredForm({ ...expiredForm, interval: e.target.value })}
+                    style={{ width: "100%", padding: "8px", background: "var(--bg-card)", border: "1px solid var(--border-color)", borderRadius: "6px", color: "white" }}
+                  >
+                    <option value="1">1 MINUTE</option>
+                    <option value="5">5 MINUTES</option>
+                    <option value="15">15 MINUTES</option>
+                    <option value="25">25 MINUTES</option>
+                    <option value="60">60 MINUTES (1 HOUR)</option>
                   </select>
                 </div>
 
@@ -832,35 +1050,259 @@ export function App() {
                 </div>
               </div>
 
-              <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
-                <button
-                  onClick={handleFetchExpired}
-                  style={{
-                    padding: "10px 20px",
-                    background: "linear-gradient(135deg, #00F5A0 0%, #00E5FF 100%)",
-                    color: "#0A0D14",
-                    fontWeight: 700,
-                    border: "none",
-                    borderRadius: "8px",
-                    cursor: "pointer",
-                  }}
-                >
-                  REFRESH EXPIRED OPTIONS DATA
-                </button>
-                <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
-                  ⚡ Auto-populated with completed trading dates ({expiredForm.fromDate} to {expiredForm.toDate})
-                </span>
+              {/* QUICK PRESETS TOOLBAR: DATE RANGES & STRIKE OFFSETS WITH CALCULATED STRIKE PRICES */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
+                {/* STRIKE OFFSETS WITH CALCULATED ABSOLUTE PRICES */}
+                <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>STRIKE PRESETS:</span>
+                  {[
+                    { tag: "ATM", offset: 0 },
+                    { tag: "ATM+1", offset: 1 },
+                    { tag: "ATM-1", offset: -1 },
+                    { tag: "ATM+2", offset: 2 },
+                    { tag: "ATM-2", offset: -2 },
+                    { tag: "ATM+3", offset: 3 },
+                    { tag: "ATM-3", offset: -3 },
+                    { tag: "ATM+5", offset: 5 },
+                    { tag: "ATM-5", offset: -5 },
+                  ].map(({ tag, offset }) => {
+                    const strikeVal = scripSpotInfo.atmStrike + offset * scripSpotInfo.step;
+                    const isSelected = expiredForm.strike === tag;
+                    return (
+                      <button
+                        key={tag}
+                        onClick={() => setExpiredForm({ ...expiredForm, strike: tag })}
+                        style={{
+                          padding: "3px 8px",
+                          fontSize: "11px",
+                          background: isSelected ? "rgba(0, 229, 255, 0.2)" : "var(--bg-card)",
+                          border: isSelected ? "1px solid var(--accent-cyan)" : "1px solid var(--border-color)",
+                          color: isSelected ? "var(--accent-cyan)" : "var(--text-secondary)",
+                          borderRadius: "4px",
+                          cursor: "pointer",
+                        }}
+                        className="mono"
+                      >
+                        {tag} <span style={{ opacity: 0.75 }}>({strikeVal})</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* DATE RANGE PRESETS */}
+                <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                  <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>DATE RANGE:</span>
+                  {[
+                    { label: "30 Days (1M)", days: 30 },
+                    { label: "60 Days (2M)", days: 60 },
+                    { label: "90 Days (3M)", days: 90 },
+                    { label: "180 Days (Max)", days: 180 },
+                  ].map((preset) => (
+                    <button
+                      key={preset.days}
+                      onClick={() => setExpiredDatePreset(preset.days)}
+                      style={{
+                        padding: "3px 8px",
+                        fontSize: "11px",
+                        background: "var(--bg-card)",
+                        border: "1px solid var(--border-color)",
+                        color: "var(--accent-green)",
+                        borderRadius: "4px",
+                        cursor: "pointer",
+                      }}
+                      className="mono"
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* ACTION & VIEW SWITCHER BAR */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
+                <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+                  <button
+                    onClick={handleFetchExpired}
+                    style={{
+                      padding: "10px 22px",
+                      background: "linear-gradient(135deg, #00F5A0 0%, #00E5FF 100%)",
+                      color: "#0A0D14",
+                      fontWeight: 700,
+                      border: "none",
+                      borderRadius: "8px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    REFRESH EXPIRED OPTIONS DATA
+                  </button>
+                  <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+                    ⚡ Querying historical series from {expiredForm.fromDate} to {expiredForm.toDate}
+                  </span>
+                </div>
+
+                {/* VIEW MODE TOGGLE BUTTONS */}
+                <div style={{ display: "flex", gap: "4px", background: "#090C12", padding: "4px", borderRadius: "8px", border: "1px solid var(--border-color)" }}>
+                  <button
+                    onClick={() => setExpiredViewMode("CHART")}
+                    style={{
+                      padding: "6px 14px",
+                      fontSize: "11px",
+                      fontWeight: 700,
+                      borderRadius: "6px",
+                      border: "none",
+                      cursor: "pointer",
+                      background: expiredViewMode === "CHART" ? "var(--bg-card)" : "transparent",
+                      color: expiredViewMode === "CHART" ? "var(--accent-cyan)" : "var(--text-muted)",
+                    }}
+                  >
+                    📊 CHART VIEW
+                  </button>
+                  <button
+                    onClick={() => setExpiredViewMode("TABLE")}
+                    style={{
+                      padding: "6px 14px",
+                      fontSize: "11px",
+                      fontWeight: 700,
+                      borderRadius: "6px",
+                      border: "none",
+                      cursor: "pointer",
+                      background: expiredViewMode === "TABLE" ? "var(--bg-card)" : "transparent",
+                      color: expiredViewMode === "TABLE" ? "var(--accent-green)" : "var(--text-muted)",
+                    }}
+                  >
+                    📋 DATA TABLE VIEW
+                  </button>
+                  <button
+                    onClick={() => setExpiredViewMode("SPLIT")}
+                    style={{
+                      padding: "6px 14px",
+                      fontSize: "11px",
+                      fontWeight: 700,
+                      borderRadius: "6px",
+                      border: "none",
+                      cursor: "pointer",
+                      background: expiredViewMode === "SPLIT" ? "var(--bg-card)" : "transparent",
+                      color: expiredViewMode === "SPLIT" ? "white" : "var(--text-muted)",
+                    }}
+                  >
+                    🔀 SPLIT VIEW
+                  </button>
+                </div>
               </div>
 
               {expiredResult && (
-                <div style={{ marginTop: "10px", background: "var(--bg-card)", padding: "16px", borderRadius: "8px" }}>
-                  <div style={{ fontSize: "13px", fontWeight: 600, color: "var(--accent-cyan)", marginBottom: "8px", display: "flex", justifyContent: "space-between" }}>
-                    <span>Query Result Status: {expiredResult.status || "OK"}</span>
-                    <span>Scrip ID: {expiredResult.request?.securityId || expiredForm.securityId} ({expiredResult.request?.expiryFlag || "WEEK"} {expiredResult.request?.drvOptionType || "CALL"})</span>
+                <div style={{ marginTop: "10px", display: "flex", flexDirection: "column", gap: "16px" }}>
+                  {/* COMPREHENSIVE 6-CARD SPOT & MONEYNESS KPI BAR */}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: "12px" }}>
+                    <div className="glass-card" style={{ padding: "12px", borderRadius: "8px" }}>
+                      <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>UNDERLYING SPOT</div>
+                      <div style={{ fontSize: "17px", fontWeight: 700, color: "var(--accent-green)" }} className="mono">
+                        ₹{scripSpotInfo.spot.toFixed(2)}
+                      </div>
+                    </div>
+
+                    <div className="glass-card" style={{ padding: "12px", borderRadius: "8px" }}>
+                      <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>ATM STRIKE</div>
+                      <div style={{ fontSize: "17px", fontWeight: 700, color: "white" }} className="mono">
+                        {scripSpotInfo.atmStrike}
+                      </div>
+                    </div>
+
+                    <div className="glass-card" style={{ padding: "12px", borderRadius: "8px" }}>
+                      <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>TARGET STRIKE</div>
+                      <div style={{ fontSize: "16px", fontWeight: 700, color: "var(--accent-cyan)" }} className="mono">
+                        {scripSpotInfo.calculatedStrike} ({expiredForm.strike})
+                      </div>
+                      <div style={{ fontSize: "10px", color: scripSpotInfo.diffFromSpot >= 0 ? "var(--accent-green)" : "var(--accent-red)" }} className="mono">
+                        {scripSpotInfo.diffFromSpot >= 0 ? "+" : ""}{scripSpotInfo.diffFromSpot.toFixed(1)} pts ({scripSpotInfo.diffPct.toFixed(2)}%)
+                      </div>
+                    </div>
+
+                    <div className="glass-card" style={{ padding: "12px", borderRadius: "8px" }}>
+                      <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>MONEYNESS TYPE</div>
+                      <div style={{ fontSize: "12px", fontWeight: 700, color: "#FFB800", marginTop: "4px" }}>
+                        {scripSpotInfo.moneynessTag}
+                      </div>
+                    </div>
+
+                    <div className="glass-card" style={{ padding: "12px", borderRadius: "8px" }}>
+                      <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>LAST EXPIRED PRICE</div>
+                      <div style={{ fontSize: "17px", fontWeight: 700, color: "var(--accent-green)" }} className="mono">
+                        {expiredCandles.length > 0 ? `₹${expiredCandles[expiredCandles.length - 1].close.toFixed(2)}` : "-"}
+                      </div>
+                    </div>
+
+                    <div className="glass-card" style={{ padding: "12px", borderRadius: "8px" }}>
+                      <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>PRICE HIGH / LOW</div>
+                      <div style={{ fontSize: "13px", fontWeight: 700, color: "white" }} className="mono">
+                        {expiredCandles.length > 0
+                          ? `₹${Math.max(...expiredCandles.map((c) => c.high)).toFixed(2)} / ₹${Math.min(...expiredCandles.map((c) => c.low)).toFixed(2)}`
+                          : "-"}
+                      </div>
+                    </div>
                   </div>
-                  <pre className="mono" style={{ fontSize: "11px", color: "var(--text-secondary)", overflowX: "auto", maxHeight: "400px" }}>
-                    {JSON.stringify(expiredResult, null, 2)}
-                  </pre>
+
+                  {/* DATA REPRESENTATION DISPLAY: CHART, TABLE, OR SPLIT */}
+                  {expiredCandles.length > 0 ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                      {/* CHART COMPONENT (Visible in CHART or SPLIT mode) */}
+                      {(expiredViewMode === "CHART" || expiredViewMode === "SPLIT") && (
+                        <div
+                          style={{
+                            height: expiredViewMode === "SPLIT" ? "380px" : "520px",
+                            borderRadius: "12px",
+                            overflow: "hidden",
+                            border: "1px solid var(--border-color)",
+                            background: "#0F131C",
+                          }}
+                        >
+                          <TradingViewChart
+                            symbol={`${selectedSymbol.toUpperCase()} ${expiredForm.strike} ${expiredForm.drvOptionType}`}
+                            interval={expiredForm.interval}
+                            customCandles={expiredCandles}
+                          />
+                        </div>
+                      )}
+
+                      {/* DATA TABLE COMPONENT (Visible in TABLE or SPLIT mode) */}
+                      {(expiredViewMode === "TABLE" || expiredViewMode === "SPLIT") && (
+                        <ExpiredOptionsTable
+                          candles={expiredCandles}
+                          symbol={selectedSymbol.toUpperCase()}
+                          strike={expiredForm.strike}
+                          optionType={expiredForm.drvOptionType}
+                          spotInfo={scripSpotInfo}
+                        />
+                      )}
+                    </div>
+                  ) : (
+                    <div style={{ padding: "30px", background: "var(--bg-card)", border: "1px solid var(--border-color)", borderRadius: "8px", textAlign: "center", color: "var(--text-muted)" }}>
+                      ⚠️ No expired option candle points returned by DhanHQ API for the selected date range ({expiredForm.fromDate} to {expiredForm.toDate}) and strike ({expiredForm.strike} {expiredForm.drvOptionType}).
+                    </div>
+                  )}
+
+                  {/* TOGGLE RAW JSON VIEW */}
+                  <div>
+                    <button
+                      onClick={() => setShowRawJson(!showRawJson)}
+                      style={{
+                        padding: "6px 12px",
+                        fontSize: "11px",
+                        background: "var(--bg-card)",
+                        border: "1px solid var(--border-color)",
+                        borderRadius: "6px",
+                        color: "var(--text-secondary)",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {showRawJson ? "▲ Hide Raw JSON Payload" : "▼ View Raw JSON Payload"}
+                    </button>
+                    {showRawJson && (
+                      <pre className="mono" style={{ marginTop: "8px", fontSize: "11px", color: "var(--text-secondary)", overflowX: "auto", maxHeight: "300px", background: "var(--bg-card)", padding: "12px", borderRadius: "8px" }}>
+                        {JSON.stringify(expiredResult, null, 2)}
+                      </pre>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
