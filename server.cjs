@@ -38,29 +38,43 @@ async function getDhanClient() {
 
   clientInitPromise = (async () => {
     try {
-      const endpointBaseUrl = process.env.TOKEN_SERVICE_URL || "https://algo-trading-api.onrender.com";
+      const endpointBaseUrl = process.env.TOKEN_SERVICE_URL || process.env.DHAN_TOKEN_SERVICE_URL;
       const bearerToken = process.env.DHAN_TOKEN_ACCESS_TOKEN || process.env.BEARER_TOKEN;
+      const staticToken = process.env.DHAN_TOKEN || process.env.VITE_DHAN_TOKEN;
+      const staticClientId = process.env.DHAN_CLIENT_ID || process.env.VITE_DHAN_CLIENT_ID;
 
-      if (endpointBaseUrl && bearerToken) {
-        console.log(`🔑 Initializing DhanClient via Token Endpoint: ${endpointBaseUrl}`);
+      if (endpointBaseUrl && bearerToken && endpointBaseUrl !== "DUMMY" && endpointBaseUrl !== "") {
+        let cleanBaseUrl = endpointBaseUrl;
+        if (cleanBaseUrl.endsWith("/auth/dhan/token")) {
+          cleanBaseUrl = cleanBaseUrl.slice(0, -"/auth/dhan/token".length);
+        } else if (cleanBaseUrl.endsWith("/auth/dhan/token/")) {
+          cleanBaseUrl = cleanBaseUrl.slice(0, -"/auth/dhan/token/".length);
+        }
+        console.log(`🔑 Initializing DhanClient via Token Endpoint: ${cleanBaseUrl}`);
         client = await DhanClient.fromTokenEndpoint({
-          endpointBaseUrl,
+          endpointBaseUrl: cleanBaseUrl,
           bearerToken,
         });
-      } else {
+      } else if (staticToken && staticClientId && staticToken !== "DUMMY" && staticToken !== "") {
         console.log("🔑 Initializing DhanClient via static ENV token");
         client = new DhanClient({
-          token: process.env.DHAN_TOKEN,
-          clientId: process.env.DHAN_CLIENT_ID,
+          token: staticToken,
+          clientId: staticClientId,
+        });
+      } else {
+        console.log("⚠️ No valid credentials found, initializing with DUMMY values");
+        client = new DhanClient({
+          token: "DUMMY",
+          clientId: "DUMMY",
         });
       }
       console.log("✅ DhanClient successfully initialized!");
       return client;
     } catch (err) {
-      console.error("⚠️ Failed to initialize from token endpoint, falling back to static env credentials:", err.message);
+      console.error("⚠️ Failed to initialize DhanClient, falling back to static env credentials:", err.message);
       client = new DhanClient({
-        token: process.env.DHAN_TOKEN || "DUMMY",
-        clientId: process.env.DHAN_CLIENT_ID || "DUMMY",
+        token: process.env.DHAN_TOKEN || process.env.VITE_DHAN_TOKEN || "DUMMY",
+        clientId: process.env.DHAN_CLIENT_ID || process.env.VITE_DHAN_CLIENT_ID || "DUMMY",
       });
       return client;
     }
@@ -423,26 +437,30 @@ wss.on("connection", (ws) => {
       const base = activeConfig.basePrice || 24250.70;
       const prevClose = activeConfig.prevClose || (base * 0.994);
 
-      // Zero-Drift Micro Bid-Ask Spread Oscillation (±0.10 around real spot price)
-      const spreadOffset = Number((Math.sin(Date.now() / 250) * 0.10).toFixed(2));
-      const roundedLtp = Number((base + spreadOffset).toFixed(2));
+      const roundedLtp = Number(base.toFixed(2));
       const step = base * 0.0001;
 
       const dayChange = Number((roundedLtp - prevClose).toFixed(2));
       const dayPChange = Number(((dayChange / prevClose) * 100).toFixed(2));
-      const dayVolume = (activeConfig.dayVolume || 355000000) + Math.floor(Math.random() * 200);
+      const dayVolume = activeConfig.dayVolume || 0;
 
-      const bids = Array.from({ length: 10 }, (_, idx) => ({
-        price: Number((roundedLtp - (idx + 1) * step).toFixed(2)),
-        quantity: Math.floor(Math.random() * 500) + 50,
-        orders: Math.floor(Math.random() * 10) + 1,
-      }));
+      const bids = Array.from({ length: 10 }, (_, idx) => {
+        const factor = (10 - idx) * 100;
+        return {
+          price: Number((roundedLtp - (idx + 1) * step).toFixed(2)),
+          quantity: factor,
+          orders: Math.max(1, Math.floor(factor / 50)),
+        };
+      });
 
-      const asks = Array.from({ length: 10 }, (_, idx) => ({
-        price: Number((roundedLtp + (idx + 1) * step).toFixed(2)),
-        quantity: Math.floor(Math.random() * 500) + 50,
-        orders: Math.floor(Math.random() * 10) + 1,
-      }));
+      const asks = Array.from({ length: 10 }, (_, idx) => {
+        const factor = (idx + 1) * 100;
+        return {
+          price: Number((roundedLtp + (idx + 1) * step).toFixed(2)),
+          quantity: factor,
+          orders: Math.max(1, Math.floor(factor / 50)),
+        };
+      });
 
       ws.send(JSON.stringify({
         type: "tick",
@@ -458,7 +476,7 @@ wss.on("connection", (ws) => {
         timestamp: new Date().toISOString(),
       }));
     }
-  }, 150);
+  }, 1000);
 
   ws.on("close", () => {
     clearInterval(interval);
