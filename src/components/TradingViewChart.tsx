@@ -282,15 +282,54 @@ export const TradingViewChart: React.FC<ChartProps> = ({
   // 3. Smooth Price AND Volume Lerp Animation Loop (60fps requestAnimationFrame)
   useEffect(() => {
     if (!livePrice) return;
-    targetPriceRef.current = livePrice;
-    if (currentVisualPriceRef.current === null) {
-      currentVisualPriceRef.current = livePrice;
-    }
 
     const isSecondInterval = interval.endsWith("s");
     const barSeconds = isSecondInterval
       ? (parseInt(interval, 10) || 15)
       : (parseInt(interval, 10) || 15) * 60;
+
+    const nowUnix = Math.floor(Date.now() / 1000);
+    const targetBarTime = Math.floor(nowUnix / barSeconds) * barSeconds;
+
+    // Check if timeframe bar boundary passed -> RECONCILE & FORM NEW CANDLE
+    if (
+      seriesRef.current &&
+      lastCandleRef.current &&
+      lastCandleRef.current.time &&
+      targetBarTime > lastCandleRef.current.time
+    ) {
+      const displayPrice = currentVisualPriceRef.current ?? livePrice;
+
+      // Reconcile previous candle
+      seriesRef.current.update(lastCandleRef.current);
+
+      // Form NEW candle
+      const newCandle = {
+        time: targetBarTime,
+        open: displayPrice,
+        high: displayPrice,
+        low: displayPrice,
+        close: displayPrice,
+        volume: 0,
+      };
+      lastCandleRef.current = newCandle;
+      currentVisualVolumeRef.current = 0;
+      allCandlesRef.current.push(newCandle);
+
+      seriesRef.current.update(newCandle);
+      if (volumeSeriesRef.current) {
+        volumeSeriesRef.current.update({
+          time: targetBarTime,
+          value: 0,
+          color: "rgba(0, 245, 160, 0.35)",
+        });
+      }
+    }
+
+    targetPriceRef.current = livePrice;
+    if (currentVisualPriceRef.current === null) {
+      currentVisualPriceRef.current = livePrice;
+    }
 
     let animId: number;
     const animate = () => {
@@ -302,69 +341,50 @@ export const TradingViewChart: React.FC<ChartProps> = ({
       ) {
         // Price lerp step
         const priceDiff = targetPriceRef.current - currentVisualPriceRef.current;
-        if (Math.abs(priceDiff) > 0.001) {
-          currentVisualPriceRef.current += priceDiff * 0.18;
-        }
-
-        const displayPrice = Number(currentVisualPriceRef.current.toFixed(2));
-        const nowUnix = Math.floor(Date.now() / 1000);
-        const targetBarTime = Math.floor(nowUnix / barSeconds) * barSeconds;
-
-        // Check if timeframe bar boundary passed -> RECONCILE & FORM NEW CANDLE
-        if (lastCandleRef.current.time && targetBarTime > lastCandleRef.current.time) {
-          // Reconcile previous candle
-          seriesRef.current.update(lastCandleRef.current);
-
-          // Form NEW candle
-          const newCandle = {
-            time: targetBarTime,
-            open: displayPrice,
-            high: displayPrice,
-            low: displayPrice,
-            close: displayPrice,
-            volume: 150,
-          };
-          lastCandleRef.current = newCandle;
-          currentVisualVolumeRef.current = 150;
-          allCandlesRef.current.push(newCandle);
-
-          seriesRef.current.update(newCandle);
-          if (volumeSeriesRef.current) {
-            volumeSeriesRef.current.update({
-              time: targetBarTime,
-              value: 150,
-              color: "rgba(0, 245, 160, 0.35)",
-            });
-          }
-        } else {
-          // Update active forming candle
+        if (Math.abs(priceDiff) < 0.005) {
+          currentVisualPriceRef.current = targetPriceRef.current;
+          
+          const displayPrice = Number(currentVisualPriceRef.current.toFixed(2));
           const currentCandle = { ...lastCandleRef.current };
           currentCandle.close = displayPrice;
           currentCandle.high = Math.max(currentCandle.high, displayPrice);
           currentCandle.low = Math.min(currentCandle.low, displayPrice);
-          currentCandle.volume = (currentCandle.volume || 100) + 5;
-
-          // Smooth volume lerp step
-          if (currentVisualVolumeRef.current === null) {
-            currentVisualVolumeRef.current = currentCandle.volume;
-          } else {
-            const volDiff = currentCandle.volume - currentVisualVolumeRef.current;
-            currentVisualVolumeRef.current += volDiff * 0.18;
-          }
-
+          
           lastCandleRef.current = currentCandle;
           seriesRef.current.update(currentCandle);
-
-          if (volumeSeriesRef.current) {
-            volumeSeriesRef.current.update({
-              time: currentCandle.time,
-              value: Math.round(currentVisualVolumeRef.current),
-              color: currentCandle.close >= currentCandle.open ? "rgba(0, 245, 160, 0.35)" : "rgba(255, 73, 92, 0.35)",
-            });
-          }
+          return;
         }
+
+        currentVisualPriceRef.current += priceDiff * 0.18;
+
+        const displayPrice = Number(currentVisualPriceRef.current.toFixed(2));
+        const currentCandle = { ...lastCandleRef.current };
+        currentCandle.close = displayPrice;
+        currentCandle.high = Math.max(currentCandle.high, displayPrice);
+        currentCandle.low = Math.min(currentCandle.low, displayPrice);
+        currentCandle.volume = currentCandle.volume || 0;
+
+        // Smooth volume lerp step
+        if (currentVisualVolumeRef.current === null) {
+          currentVisualVolumeRef.current = currentCandle.volume;
+        } else {
+          const volDiff = currentCandle.volume - currentVisualVolumeRef.current;
+          currentVisualVolumeRef.current += volDiff * 0.18;
+        }
+
+        lastCandleRef.current = currentCandle;
+        seriesRef.current.update(currentCandle);
+
+        if (volumeSeriesRef.current) {
+          volumeSeriesRef.current.update({
+            time: currentCandle.time,
+            value: Math.round(currentVisualVolumeRef.current ?? 0),
+            color: currentCandle.close >= currentCandle.open ? "rgba(0, 245, 160, 0.35)" : "rgba(255, 73, 92, 0.35)",
+          });
+        }
+
+        animId = requestAnimationFrame(animate);
       }
-      animId = requestAnimationFrame(animate);
     };
 
     animId = requestAnimationFrame(animate);
