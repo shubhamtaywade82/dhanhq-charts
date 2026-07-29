@@ -47,6 +47,16 @@ interface SessionInfo {
   lastCompletedTradingDay: string;
 }
 
+const SYMBOL_ID_MAP: Record<string, { id: string; segment: string; instrument: string }> = {
+  nifty: { id: "13", segment: "NSE_FNO", instrument: "INDEX" },
+  banknifty: { id: "25", segment: "NSE_FNO", instrument: "INDEX" },
+  sensex: { id: "51", segment: "BSE_FNO", instrument: "INDEX" },
+  reliance: { id: "2885", segment: "NSE_FNO", instrument: "OPTSTK" },
+  hdfcbank: { id: "1333", segment: "NSE_FNO", instrument: "OPTSTK" },
+  tcs: { id: "11536", segment: "NSE_FNO", instrument: "OPTSTK" },
+  infy: { id: "1594", segment: "NSE_FNO", instrument: "OPTSTK" },
+};
+
 export function App() {
   const [activeTab, setActiveTab] = useState<"terminal" | "options" | "expired" | "bias" | "portfolio">(() => {
     return (localStorage.getItem("dhan_activeTab") as any) || "terminal";
@@ -127,6 +137,33 @@ export function App() {
     toDate: "2026-07-28",
   });
 
+  // Dynamic sync expired options parameters when selectedSymbol or session updates
+  useEffect(() => {
+    const config = SYMBOL_ID_MAP[selectedSymbol.toLowerCase()];
+    if (config) {
+      setExpiredForm((prev) => ({
+        ...prev,
+        securityId: config.id,
+        exchangeSegment: config.segment,
+        instrument: config.instrument,
+      }));
+    }
+  }, [selectedSymbol]);
+
+  useEffect(() => {
+    if (session?.lastCompletedTradingDay) {
+      const to = session.lastCompletedTradingDay;
+      const toDateObj = new Date(to);
+      const fromDateObj = new Date(toDateObj.getTime() - 28 * 24 * 60 * 60 * 1000);
+      const from = fromDateObj.toISOString().split("T")[0];
+      setExpiredForm((prev) => ({
+        ...prev,
+        toDate: to,
+        fromDate: from,
+      }));
+    }
+  }, [session]);
+
   // 1. Poll Session Info & Connect WebSocket directly to port 3001
   useEffect(() => {
     const fetchSession = async () => {
@@ -187,7 +224,7 @@ export function App() {
     };
   }, [selectedSymbol]);
 
-  // Fetch tab-specific data with 3-second auto-refresh for Option Chain
+  // Fetch tab-specific data with proactive auto-fetch for Option Chain, Expired Options, Bias & Portfolio
   useEffect(() => {
     let timer: any = null;
 
@@ -196,6 +233,8 @@ export function App() {
     } else if (activeTab === "options") {
       fetchOptionChain();
       timer = setInterval(fetchOptionChain, 3000);
+    } else if (activeTab === "expired") {
+      handleFetchExpired();
     } else if (activeTab === "portfolio") {
       fetchPortfolioAndLedger();
     }
@@ -203,7 +242,17 @@ export function App() {
     return () => {
       if (timer) clearInterval(timer);
     };
-  }, [activeTab, selectedSymbol, selectedExpiry]);
+  }, [
+    activeTab,
+    selectedSymbol,
+    selectedExpiry,
+    expiredForm.securityId,
+    expiredForm.fromDate,
+    expiredForm.toDate,
+    expiredForm.strike,
+    expiredForm.drvOptionType,
+    expiredForm.expiryFlag,
+  ]);
 
   const fetchBias = async () => {
     setLoading(true);
@@ -707,12 +756,17 @@ export function App() {
           {/* TAB 3: EXPIRED OPTIONS BACKTEST */}
           {activeTab === "expired" && (
             <div className="glass-panel" style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "20px" }}>
-              <div style={{ fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", gap: "8px" }}>
-                <Database size={18} color="var(--accent-cyan)" />
-                <span>Expired Options Rolling Chart Historical Query Builder</span>
+              <div style={{ fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <Database size={18} color="var(--accent-cyan)" />
+                  <span>Expired Options Rolling Chart Historical Query Builder</span>
+                </div>
+                <div style={{ fontSize: "12px", background: "rgba(0,229,255,0.1)", border: "1px solid var(--accent-cyan)", padding: "4px 10px", borderRadius: "6px", color: "var(--accent-cyan)" }} className="mono">
+                  ACTIVE SCRIP: {selectedSymbol.toUpperCase()} (ID: {expiredForm.securityId})
+                </div>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: "12px" }}>
                 <div>
                   <label style={{ fontSize: "11px", color: "var(--text-muted)" }}>SECURITY ID</label>
                   <input
@@ -756,28 +810,53 @@ export function App() {
                     <option value="PUT">PUT</option>
                   </select>
                 </div>
+
+                <div>
+                  <label style={{ fontSize: "11px", color: "var(--text-muted)" }}>FROM DATE</label>
+                  <input
+                    type="date"
+                    value={expiredForm.fromDate}
+                    onChange={(e) => setExpiredForm({ ...expiredForm, fromDate: e.target.value })}
+                    style={{ width: "100%", padding: "8px", background: "var(--bg-card)", border: "1px solid var(--border-color)", borderRadius: "6px", color: "white", fontFamily: "var(--font-mono)" }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: "11px", color: "var(--text-muted)" }}>TO DATE</label>
+                  <input
+                    type="date"
+                    value={expiredForm.toDate}
+                    onChange={(e) => setExpiredForm({ ...expiredForm, toDate: e.target.value })}
+                    style={{ width: "100%", padding: "8px", background: "var(--bg-card)", border: "1px solid var(--border-color)", borderRadius: "6px", color: "white", fontFamily: "var(--font-mono)" }}
+                  />
+                </div>
               </div>
 
-              <button
-                onClick={handleFetchExpired}
-                style={{
-                  alignSelf: "flex-start",
-                  padding: "10px 20px",
-                  background: "linear-gradient(135deg, #00F5A0 0%, #00E5FF 100%)",
-                  color: "#0A0D14",
-                  fontWeight: 700,
-                  border: "none",
-                  borderRadius: "8px",
-                  cursor: "pointer",
-                }}
-              >
-                FETCH EXPIRED OPTIONS ROLLING DATA
-              </button>
+              <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+                <button
+                  onClick={handleFetchExpired}
+                  style={{
+                    padding: "10px 20px",
+                    background: "linear-gradient(135deg, #00F5A0 0%, #00E5FF 100%)",
+                    color: "#0A0D14",
+                    fontWeight: 700,
+                    border: "none",
+                    borderRadius: "8px",
+                    cursor: "pointer",
+                  }}
+                >
+                  REFRESH EXPIRED OPTIONS DATA
+                </button>
+                <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+                  ⚡ Auto-populated with completed trading dates ({expiredForm.fromDate} to {expiredForm.toDate})
+                </span>
+              </div>
 
               {expiredResult && (
                 <div style={{ marginTop: "10px", background: "var(--bg-card)", padding: "16px", borderRadius: "8px" }}>
-                  <div style={{ fontSize: "13px", fontWeight: 600, color: "var(--accent-cyan)", marginBottom: "8px" }}>
-                    Query Result Status: {expiredResult.status || "OK"}
+                  <div style={{ fontSize: "13px", fontWeight: 600, color: "var(--accent-cyan)", marginBottom: "8px", display: "flex", justifyContent: "space-between" }}>
+                    <span>Query Result Status: {expiredResult.status || "OK"}</span>
+                    <span>Scrip ID: {expiredResult.request?.securityId || expiredForm.securityId} ({expiredResult.request?.expiryFlag || "WEEK"} {expiredResult.request?.drvOptionType || "CALL"})</span>
                   </div>
                   <pre className="mono" style={{ fontSize: "11px", color: "var(--text-secondary)", overflowX: "auto", maxHeight: "400px" }}>
                     {JSON.stringify(expiredResult, null, 2)}
