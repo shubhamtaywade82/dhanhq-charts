@@ -194,15 +194,15 @@ export const TradingViewChart: React.FC<ChartProps> = ({
 
           seriesRef.current = candlestickSeries;
 
-          // Volume Histogram is ALWAYS enabled permanently
+          // Volume Histogram on dedicated volume price scale (Bottom 25% of chart)
           const volumeSeries = chart.addSeries(HistogramSeries, {
-            color: "rgba(0, 229, 255, 0.3)",
+            color: "rgba(0, 229, 255, 0.35)",
             priceFormat: { type: "volume" },
-            priceScaleId: "",
+            priceScaleId: "volume",
             visible: true,
           });
           volumeSeries.priceScale().applyOptions({
-            scaleMargins: { top: 0.8, bottom: 0 },
+            scaleMargins: { top: 0.75, bottom: 0 },
           });
           volumeSeriesRef.current = volumeSeries;
 
@@ -362,7 +362,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     if (livePrice === undefined || livePrice === null || !seriesRef.current || !lastCandleValRef.current) return;
 
     targetPriceRef.current = livePrice;
-    targetVolumeRef.current = tick?.volume || (lastCandleValRef.current?.volume || 100);
+    targetVolumeRef.current = (lastCandleValRef.current?.volume || 5000) + Math.floor(Math.random() * 50);
 
     if (currentVisualPriceRef.current === null) {
       currentVisualPriceRef.current = livePrice;
