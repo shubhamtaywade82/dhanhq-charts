@@ -29,11 +29,11 @@ app.use("/api", router);
 // Attach WebSocket Feed Service
 WebSocketFeedService.attach(wss);
 
-// Background Spot Price Sync Engine (Syncs on startup and polls real Dhan API spot prices every 2s)
+// Background Spot Price Sync Engine (Syncs on startup and polls real Dhan API spot prices every 5s)
 MarketDataService.syncRealDhanSpotPrices();
 setInterval(() => {
   MarketDataService.syncRealDhanSpotPrices();
-}, 100);
+}, 5000);
 
 // Serve Vite Static Production Bundle in Production Mode
 const distPath = path.join(__dirname, "../dist");

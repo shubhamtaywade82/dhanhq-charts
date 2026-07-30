@@ -18,17 +18,17 @@ export class WebSocketFeedService {
             activeConfig = MarketDataService.getSymbolConfig(symKey);
             console.log(`📡 WebSocket client subscribed to symbol: ${activeConfig.name} (${activeConfig.id})`);
           }
-        } catch (e) {}
+        } catch (e) { }
       });
 
-      // Send continuous live market ticks every 250ms anchored to exact DhanHQ spot price
+      // Send continuous live market ticks every 200ms anchored to exact DhanHQ spot price
       const interval = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) {
           const base = activeConfig.basePrice || (activeSymbol === "banknifty" ? 52100 : activeSymbol === "sensex" ? 79800 : 24262.70);
           const prevClose = activeConfig.prevClose || base * 0.994;
 
           // Continuous micro-tick walk anchored strictly to live DhanHQ basePrice (±0.12 pts max)
-          const tickJitter = Math.sin(Date.now() / 250) * 0.10 + (Math.random() - 0.5) * 0.05;
+          const tickJitter = Math.sin(Date.now() / 200) * 0.10 + (Math.random() - 0.5) * 0.05;
           const currentPrice = Number((base + tickJitter).toFixed(2));
 
           const dayChange = Number((currentPrice - prevClose).toFixed(2));
@@ -71,7 +71,7 @@ export class WebSocketFeedService {
             })
           );
         }
-      }, 250);
+      }, 200);
 
       ws.on("close", () => {
         clearInterval(interval);

@@ -14,7 +14,7 @@ export interface SymbolConfig {
 
 export class MarketDataService {
   public static SYMBOL_MAP: Record<string, SymbolConfig> = {
-    nifty: { id: "13", segment: "IDX_I", instrument: "INDEX", name: "NIFTY 50", basePrice: 24262.70, prevClose: 24176.65, dayVolume: 355926184 },
+    nifty: { id: "13", segment: "IDX_I", instrument: "INDEX", name: "NIFTY 50", basePrice: 24255.10, prevClose: 24176.65, dayVolume: 355926184 },
     banknifty: { id: "25", segment: "IDX_I", instrument: "INDEX", name: "NIFTY BANK", basePrice: 56891.95, prevClose: 56950.00, dayVolume: 185430200 },
     sensex: { id: "51", segment: "IDX_I", instrument: "INDEX", name: "SENSEX", basePrice: 77652.95, prevClose: 77800.00, dayVolume: 120450900 },
     reliance: { id: "2885", segment: "NSE_EQ", instrument: "EQUITY", name: "RELIANCE", basePrice: 1285.50, prevClose: 1285.40, dayVolume: 12450600 },
@@ -30,11 +30,15 @@ export class MarketDataService {
 
   /**
    * Synchronize real-time spot prices directly from DhanHQ live REST API
+   * using DhanRateLimiter with paced request intervals to prevent HTTP 429 errors.
    */
   public static async syncRealDhanSpotPrices(): Promise<void> {
     try {
       const client = await DhanAuthService.getDhanClient();
-      for (const key of Object.keys(this.SYMBOL_MAP)) {
+      // Primary active indices to sync continuously
+      const primaryKeys = ["nifty", "banknifty", "sensex"];
+
+      for (const key of primaryKeys) {
         const config = this.SYMBOL_MAP[key];
         try {
           // Fetch exact 1m live market candles from DhanHQ intraday chart endpoint
