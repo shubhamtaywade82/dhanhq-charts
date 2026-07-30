@@ -744,46 +744,6 @@ export function App() {
 
         {/* Center Main Dashboard Area */}
         <main style={{ flex: 1, padding: "16px 20px", display: "flex", flexDirection: "column", gap: "16px", overflowX: "hidden", minWidth: 0 }}>
-          {/* Top Ticker Strip */}
-          {tick && (
-            <div className="glass-card" style={{ padding: "12px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "16px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
-                <div>
-                  <span style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase" }}>SYMBOL</span>
-                  <div style={{ fontSize: "15px", fontWeight: 800, color: "var(--accent-cyan)" }}>{tick.symbol}</div>
-                </div>
-
-                <div>
-                  <span style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase" }}>LIVE PRICE (LTP)</span>
-                  <div style={{ fontSize: "18px", fontWeight: 800 }} className={tick.change >= 0 ? "price-up mono" : "price-down mono"}>
-                    ₹{tick.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                  </div>
-                </div>
-
-                <div style={{ paddingLeft: "14px", borderLeft: "1px solid var(--border-color)" }}>
-                  <span style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase" }}>DAY CHANGE</span>
-                  <div style={{ fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", gap: "4px" }} className={tick.change >= 0 ? "price-up mono" : "price-down mono"}>
-                    {tick.change >= 0 ? <ArrowUp size={13} /> : <ArrowDown size={13} />}
-                    <span>{tick.change > 0 ? `+${tick.change}` : tick.change} ({tick.pChange}%)</span>
-                  </div>
-                </div>
-
-                <div>
-                  <span style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase" }}>TOTAL VOLUME</span>
-                  <div style={{ fontSize: "13px", fontWeight: 700 }} className="mono">
-                    {tick.volume.toLocaleString("en-IN")}
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ textAlign: "right" }}>
-                <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>LIVE TICK</span>
-                <div style={{ fontSize: "12px", color: "var(--accent-green)", fontWeight: 700 }} className="mono">
-                  {new Date(tick.timestamp).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: true, hour: "2-digit", minute: "2-digit", second: "2-digit" })} IST
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* TAB 1: TERMINAL & CHART WITH OPTIONAL RIGHT 20-DEPTH SIDEBAR */}
           {activeTab === "terminal" && (
@@ -817,8 +777,8 @@ export function App() {
                   </div>
                 </div>
 
-                <div style={{ flex: 1, minHeight: "500px" }}>
-                  <TradingViewChart symbol={selectedSymbol} interval={selectedInterval} livePrice={tick?.ltp} />
+                <div style={{ flex: 1, minHeight: "520px" }}>
+                  <TradingViewChart symbol={selectedSymbol} interval={selectedInterval} livePrice={tick?.ltp} tick={tick} />
                 </div>
               </div>
 

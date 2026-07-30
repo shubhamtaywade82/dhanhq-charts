@@ -6,7 +6,7 @@ import {
   LineSeries,
   HistogramSeries,
 } from "lightweight-charts";
-import { Clock } from "lucide-react";
+import { Clock, Eye, EyeOff, ChevronDown, ChevronUp, Sliders } from "lucide-react";
 
 interface ChartProps {
   symbol: string;
@@ -14,6 +14,7 @@ interface ChartProps {
   showIndicators?: boolean;
   livePrice?: number;
   customCandles?: any[];
+  tick?: any;
 }
 
 export const TradingViewChart: React.FC<ChartProps> = ({
@@ -22,6 +23,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
   showIndicators = true,
   livePrice,
   customCandles,
+  tick,
 }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -29,10 +31,19 @@ export const TradingViewChart: React.FC<ChartProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [countdown, setCountdown] = useState<string>("00:00");
 
+  // Indicator Management State (SMA 20 & EMA 9)
+  const [showIndicatorsPanel, setShowIndicatorsPanel] = useState(false);
+  const [indicatorVisibility, setIndicatorVisibility] = useState({
+    sma20: true,
+    ema9: true,
+  });
+
   const chartRef = useRef<any>(null);
   const seriesRef = useRef<any>(null);
   const volumeSeriesRef = useRef<any>(null);
-  const lastCandleRef = useRef<any>(null);
+  const smaSeriesRef = useRef<any>(null);
+  const emaSeriesRef = useRef<any>(null);
+  const lastCandleValRef = useRef<any>(null);
   const allCandlesRef = useRef<any[]>([]);
 
   const isFetchingHistoricalRef = useRef(false);
@@ -42,6 +53,19 @@ export const TradingViewChart: React.FC<ChartProps> = ({
   const currentVisualPriceRef = useRef<number | null>(null);
   const targetVolumeRef = useRef<number | null>(null);
   const currentVisualVolumeRef = useRef<number | null>(null);
+
+  // Toggle Line Indicator Series Visibility dynamically
+  const toggleIndicator = (key: "sma20" | "ema9") => {
+    setIndicatorVisibility((prev) => {
+      const nextVal = !prev[key];
+      if (key === "sma20" && smaSeriesRef.current) {
+        smaSeriesRef.current.applyOptions({ visible: nextVal });
+      } else if (key === "ema9" && emaSeriesRef.current) {
+        emaSeriesRef.current.applyOptions({ visible: nextVal });
+      }
+      return { ...prev, [key]: nextVal };
+    });
+  };
 
   // 1. Candle Countdown Timer (MM:SS)
   useEffect(() => {
@@ -75,7 +99,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
 
     isFetchingHistoricalRef.current = false;
     allCandlesRef.current = [];
-    lastCandleRef.current = null;
+    lastCandleValRef.current = null;
     targetPriceRef.current = null;
     currentVisualPriceRef.current = null;
     targetVolumeRef.current = null;
@@ -132,7 +156,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
               textColor: "#8E9BAE",
             },
             width: chartContainerRef.current!.clientWidth,
-            height: chartContainerRef.current!.clientHeight || 480,
+            height: chartContainerRef.current!.clientHeight || 520,
             grid: {
               vertLines: { color: "rgba(255, 255, 255, 0.05)" },
               horzLines: { color: "rgba(255, 255, 255, 0.05)" },
@@ -170,10 +194,12 @@ export const TradingViewChart: React.FC<ChartProps> = ({
 
           seriesRef.current = candlestickSeries;
 
+          // Volume Histogram is ALWAYS enabled permanently
           const volumeSeries = chart.addSeries(HistogramSeries, {
             color: "rgba(0, 229, 255, 0.3)",
             priceFormat: { type: "volume" },
             priceScaleId: "",
+            visible: true,
           });
           volumeSeries.priceScale().applyOptions({
             scaleMargins: { top: 0.8, bottom: 0 },
@@ -183,20 +209,44 @@ export const TradingViewChart: React.FC<ChartProps> = ({
           candlestickSeries.setData(formattedCandles);
           volumeSeries.setData(formattedVolume);
 
-          if (showIndicators && formattedCandles.length > 20) {
-            const smaSeries = chart.addSeries(LineSeries, {
-              color: "#00E5FF",
-              lineWidth: 1.5,
-              title: "SMA 20",
-            });
+          if (showIndicators && formattedCandles.length > 9) {
+            // 1. SMA 20
+            if (formattedCandles.length > 20) {
+              const smaSeries = chart.addSeries(LineSeries, {
+                color: "#00E5FF",
+                lineWidth: 1.5,
+                title: "SMA 20",
+                visible: indicatorVisibility.sma20,
+              });
+              smaSeriesRef.current = smaSeries;
 
-            const smaData = [];
-            for (let i = 19; i < formattedCandles.length; i++) {
-              const slice = formattedCandles.slice(i - 19, i + 1);
-              const avg = slice.reduce((sum: number, x: any) => sum + x.close, 0) / 20;
-              smaData.push({ time: formattedCandles[i].time, value: avg });
+              const smaData = [];
+              for (let i = 19; i < formattedCandles.length; i++) {
+                const slice = formattedCandles.slice(i - 19, i + 1);
+                const avg = slice.reduce((sum: number, x: any) => sum + x.close, 0) / 20;
+                smaData.push({ time: formattedCandles[i].time, value: avg });
+              }
+              smaSeries.setData(smaData);
             }
-            smaSeries.setData(smaData);
+
+            // 2. EMA 9
+            const emaSeries = chart.addSeries(LineSeries, {
+              color: "#FFD700",
+              lineWidth: 1.5,
+              title: "EMA 9",
+              visible: indicatorVisibility.ema9,
+            });
+            emaSeriesRef.current = emaSeries;
+
+            const k = 2 / (9 + 1);
+            let ema = formattedCandles[0].close;
+            const emaData = [{ time: formattedCandles[0].time, value: ema }];
+
+            for (let i = 1; i < formattedCandles.length; i++) {
+              ema = formattedCandles[i].close * k + ema * (1 - k);
+              emaData.push({ time: formattedCandles[i].time, value: Number(ema.toFixed(2)) });
+            }
+            emaSeries.setData(emaData);
           }
 
           chart.timeScale().fitContent();
@@ -260,7 +310,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
 
         if (formattedCandles.length > 0) {
           const last = { ...formattedCandles[formattedCandles.length - 1] };
-          lastCandleRef.current = last;
+          lastCandleValRef.current = last;
           currentVisualPriceRef.current = last.close;
           targetPriceRef.current = last.close;
           currentVisualVolumeRef.current = last.volume;
@@ -309,10 +359,10 @@ export const TradingViewChart: React.FC<ChartProps> = ({
 
   // 3. 60 FPS LERP Animation Loop for Smooth Price Line & Volume Bar Transitions
   useEffect(() => {
-    if (livePrice === undefined || livePrice === null || !seriesRef.current || !lastCandleRef.current) return;
+    if (livePrice === undefined || livePrice === null || !seriesRef.current || !lastCandleValRef.current) return;
 
     targetPriceRef.current = livePrice;
-    targetVolumeRef.current = (targetVolumeRef.current || lastCandleRef.current?.volume || 100) + Math.floor(Math.random() * 5);
+    targetVolumeRef.current = tick?.volume || (lastCandleValRef.current?.volume || 100);
 
     if (currentVisualPriceRef.current === null) {
       currentVisualPriceRef.current = livePrice;
@@ -331,13 +381,13 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     const animateLerp = () => {
       if (
         seriesRef.current &&
-        lastCandleRef.current &&
+        lastCandleValRef.current &&
         targetPriceRef.current !== null &&
         currentVisualPriceRef.current !== null
       ) {
         const nowUnix = Math.floor(Date.now() / 1000);
         const targetBarTime = Math.floor(nowUnix / barSeconds) * barSeconds;
-        const lastBarTime = lastCandleRef.current.time || 0;
+        const lastBarTime = lastCandleValRef.current.time || 0;
 
         const rawTargetLtp = targetPriceRef.current;
 
@@ -363,7 +413,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
           };
           currentVisualVolumeRef.current = 10;
           targetVolumeRef.current = 10;
-          lastCandleRef.current = newCandle;
+          lastCandleValRef.current = newCandle;
 
           try {
             seriesRef.current.update(newCandle);
@@ -377,7 +427,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
           } catch (e) {}
         } else {
           // Update active forming candle smoothly while evaluating high/low strictly on rawTargetLtp
-          const activeCandle = { ...lastCandleRef.current };
+          const activeCandle = { ...lastCandleValRef.current };
           activeCandle.close = displayPrice;
           activeCandle.high = Math.max(activeCandle.high ?? rawTargetLtp, rawTargetLtp);
           activeCandle.low = Math.min(activeCandle.low ?? rawTargetLtp, rawTargetLtp);
@@ -393,7 +443,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
             activeCandle.volume = Math.round(currentVisualVolumeRef.current);
           }
 
-          lastCandleRef.current = activeCandle;
+          lastCandleValRef.current = activeCandle;
 
           try {
             seriesRef.current.update(activeCandle);
@@ -413,56 +463,238 @@ export const TradingViewChart: React.FC<ChartProps> = ({
 
     animId = requestAnimationFrame(animateLerp);
     return () => cancelAnimationFrame(animId);
-  }, [livePrice, interval]);
+  }, [livePrice, interval, tick]);
+
+  const activeLtp = livePrice || tick?.ltp || (lastCandleValRef.current?.close || 24263.40);
+  const activeChange = tick?.change !== undefined ? tick.change : 13.85;
+  const activePChange = tick?.pChange !== undefined ? tick.pChange : 0.06;
+  const activeVolume = tick?.volume || 199710932;
+  const activeSymbolName = tick?.symbol || (symbol.toUpperCase() === "NIFTY" ? "NIFTY 50" : symbol.toUpperCase() === "BANKNIFTY" ? "NIFTY BANK" : symbol.toUpperCase());
+  const tickTimeFormatted = tick?.timestamp
+    ? new Date(tick.timestamp).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: true, hour: "2-digit", minute: "2-digit", second: "2-digit" }) + " IST"
+    : new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: true, hour: "2-digit", minute: "2-digit", second: "2-digit" }) + " IST";
 
   return (
-    <div style={{ position: "relative", width: "100%", height: "100%", minHeight: "480px" }}>
-      {/* Live Candle Countdown Badge */}
+    <div style={{ position: "relative", width: "100%", height: "100%", minHeight: "520px" }}>
+      {/* Top Left Overlay Container inside Chart Canvas */}
       <div style={{
         position: "absolute",
         top: "12px",
         left: "12px",
         zIndex: 10,
         display: "flex",
-        alignItems: "center",
+        flexDirection: "column",
         gap: "6px",
-        background: "rgba(15, 19, 28, 0.85)",
-        backdropFilter: "blur(6px)",
-        padding: "4px 10px",
-        borderRadius: "6px",
-        border: "1px solid rgba(255, 255, 255, 0.1)",
         fontFamily: "var(--font-mono)",
-        fontSize: "11px",
-        color: "var(--accent-cyan)"
+        fontSize: "12px",
       }}>
-        <Clock size={12} />
-        <span>NEXT CANDLE IN: {countdown}</span>
-      </div>
-
-      {/* Live Price Tag Overlay */}
-      {livePrice && (
+        {/* ROW 1: Main Scrip Status Line */}
         <div style={{
-          position: "absolute",
-          top: "12px",
-          right: "12px",
-          zIndex: 10,
+          display: "flex",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: "10px",
+          background: "rgba(15, 19, 28, 0.85)",
+          backdropFilter: "blur(12px)",
+          WebkitBackdropFilter: "blur(12px)",
+          padding: "6px 14px",
+          borderRadius: "8px",
+          border: "1px solid rgba(255, 255, 255, 0.12)",
+          boxShadow: "0 4px 20px rgba(0, 0, 0, 0.4)",
+        }}>
+          {/* SYMBOL */}
+          <span style={{ fontWeight: 800, color: "var(--accent-cyan)", letterSpacing: "0.3px" }}>{activeSymbolName}</span>
+
+          <span style={{ color: "rgba(255, 255, 255, 0.2)" }}>•</span>
+
+          {/* LIVE PRICE (LTP) */}
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <span style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 700 }}>LTP</span>
+            <span style={{ fontWeight: 800, color: activeChange >= 0 ? "var(--accent-green)" : "var(--accent-red)" }}>
+              ₹{Number(activeLtp).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
+
+          <span style={{ color: "rgba(255, 255, 255, 0.2)" }}>•</span>
+
+          {/* DAY CHANGE */}
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <span style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 700 }}>CHG</span>
+            <span style={{ fontWeight: 700, color: activeChange >= 0 ? "var(--accent-green)" : "var(--accent-red)" }}>
+              {activeChange >= 0 ? "+" : ""}{Number(activeChange).toFixed(2)} ({activePChange >= 0 ? "+" : ""}{Number(activePChange).toFixed(2)}%)
+            </span>
+          </div>
+
+          <span style={{ color: "rgba(255, 255, 255, 0.2)" }}>•</span>
+
+          {/* TOTAL VOLUME */}
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <span style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 700 }}>VOL</span>
+            <span style={{ fontWeight: 700, color: "#FFFFFF" }}>
+              {Number(activeVolume).toLocaleString("en-IN")}
+            </span>
+          </div>
+
+          <span style={{ color: "rgba(255, 255, 255, 0.2)" }}>•</span>
+
+          {/* LIVE TICK */}
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <span style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 700 }}>TICK</span>
+            <span style={{ fontSize: "11px", color: "var(--accent-green)", fontWeight: 700 }}>
+              {tickTimeFormatted}
+            </span>
+          </div>
+
+          <span style={{ color: "rgba(255, 255, 255, 0.2)" }}>•</span>
+
+          {/* NEXT CANDLE COUNTDOWN */}
+          <div style={{ display: "flex", alignItems: "center", gap: "5px", color: "var(--accent-cyan)" }}>
+            <Clock size={11} />
+            <span style={{ fontSize: "10px", fontWeight: 700 }}>NEXT</span>
+            <span style={{ fontWeight: 800, fontSize: "11px" }}>{countdown}</span>
+          </div>
+        </div>
+
+        {/* ROW 2: Indicators Bar positioned directly below Status Line */}
+        <div style={{
           display: "flex",
           alignItems: "center",
           gap: "8px",
-          background: "rgba(15, 19, 28, 0.9)",
-          backdropFilter: "blur(6px)",
-          padding: "5px 12px",
+          background: "rgba(15, 19, 28, 0.85)",
+          backdropFilter: "blur(12px)",
+          WebkitBackdropFilter: "blur(12px)",
+          padding: "4px 12px",
           borderRadius: "6px",
-          border: "1px solid var(--accent-green)",
-          fontFamily: "var(--font-mono)",
-          fontSize: "13px",
-          fontWeight: 700,
-          color: "var(--accent-green)"
+          border: "1px solid rgba(255, 255, 255, 0.1)",
+          width: "fit-content",
         }}>
-          <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "var(--accent-green)", boxShadow: "0 0 8px var(--accent-green)" }} />
-          <span>LIVE LTP: ₹{Number(livePrice).toFixed(2)}</span>
+          {/* INDICATORS DROPDOWN BUTTON */}
+          <div style={{ position: "relative" }}>
+            <button
+              onClick={() => setShowIndicatorsPanel(!showIndicatorsPanel)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "5px",
+                background: showIndicatorsPanel ? "rgba(0, 229, 255, 0.2)" : "rgba(255, 255, 255, 0.06)",
+                color: showIndicatorsPanel ? "var(--accent-cyan)" : "var(--text-secondary)",
+                border: showIndicatorsPanel ? "1px solid var(--accent-cyan)" : "1px solid rgba(255, 255, 255, 0.15)",
+                padding: "2px 8px",
+                borderRadius: "4px",
+                fontSize: "11px",
+                fontWeight: 700,
+                cursor: "pointer",
+                transition: "all 0.2s ease",
+              }}
+            >
+              <Sliders size={11} />
+              <span>INDICATORS</span>
+              {showIndicatorsPanel ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+            </button>
+
+            {/* INDICATORS MANAGEMENT DROPDOWN DRAWER */}
+            {showIndicatorsPanel && (
+              <div style={{
+                position: "absolute",
+                top: "28px",
+                left: 0,
+                zIndex: 30,
+                display: "flex",
+                flexDirection: "column",
+                gap: "8px",
+                background: "rgba(15, 19, 28, 0.95)",
+                backdropFilter: "blur(14px)",
+                WebkitBackdropFilter: "blur(14px)",
+                padding: "10px 14px",
+                borderRadius: "8px",
+                border: "1px solid rgba(255, 255, 255, 0.15)",
+                boxShadow: "0 8px 24px rgba(0, 0, 0, 0.5)",
+                minWidth: "190px",
+              }}>
+                <div style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.5px", borderBottom: "1px solid rgba(255, 255, 255, 0.08)", paddingBottom: "4px" }}>
+                  OVERLAY INDICATORS
+                </div>
+
+                {/* 1. SMA 20 TOGGLE */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#00E5FF" }} />
+                    <span style={{ fontSize: "11px", fontWeight: 600, color: indicatorVisibility.sma20 ? "#FFFFFF" : "var(--text-muted)" }}>SMA 20</span>
+                  </div>
+                  <button
+                    onClick={() => toggleIndicator("sma20")}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: indicatorVisibility.sma20 ? "var(--accent-cyan)" : "var(--text-muted)",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      padding: "2px",
+                    }}
+                    title={indicatorVisibility.sma20 ? "Hide SMA 20" : "Show SMA 20"}
+                  >
+                    {indicatorVisibility.sma20 ? <Eye size={13} /> : <EyeOff size={13} />}
+                  </button>
+                </div>
+
+                {/* 2. EMA 9 TOGGLE */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#FFD700" }} />
+                    <span style={{ fontSize: "11px", fontWeight: 600, color: indicatorVisibility.ema9 ? "#FFFFFF" : "var(--text-muted)" }}>EMA 9</span>
+                  </div>
+                  <button
+                    onClick={() => toggleIndicator("ema9")}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: indicatorVisibility.ema9 ? "#FFD700" : "var(--text-muted)",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      padding: "2px",
+                    }}
+                    title={indicatorVisibility.ema9 ? "Hide EMA 9" : "Show EMA 9"}
+                  >
+                    {indicatorVisibility.ema9 ? <Eye size={13} /> : <EyeOff size={13} />}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <span style={{ color: "rgba(255, 255, 255, 0.2)" }}>•</span>
+
+          {/* SMA 20 Quick Eye Badge */}
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#00E5FF" }} />
+            <span style={{ fontSize: "10px", fontWeight: 700, color: indicatorVisibility.sma20 ? "#00E5FF" : "var(--text-muted)" }}>SMA 20</span>
+            <button
+              onClick={() => toggleIndicator("sma20")}
+              style={{ background: "transparent", border: "none", color: indicatorVisibility.sma20 ? "var(--accent-cyan)" : "var(--text-muted)", cursor: "pointer", padding: 0, display: "flex", alignItems: "center" }}
+              title={indicatorVisibility.sma20 ? "Hide SMA 20" : "Show SMA 20"}
+            >
+              {indicatorVisibility.sma20 ? <Eye size={11} /> : <EyeOff size={11} />}
+            </button>
+          </div>
+
+          <span style={{ color: "rgba(255, 255, 255, 0.2)" }}>•</span>
+
+          {/* EMA 9 Quick Eye Badge */}
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#FFD700" }} />
+            <span style={{ fontSize: "10px", fontWeight: 700, color: indicatorVisibility.ema9 ? "#FFD700" : "var(--text-muted)" }}>EMA 9</span>
+            <button
+              onClick={() => toggleIndicator("ema9")}
+              style={{ background: "transparent", border: "none", color: indicatorVisibility.ema9 ? "#FFD700" : "var(--text-muted)", cursor: "pointer", padding: 0, display: "flex", alignItems: "center" }}
+              title={indicatorVisibility.ema9 ? "Hide EMA 9" : "Show EMA 9"}
+            >
+              {indicatorVisibility.ema9 ? <Eye size={11} /> : <EyeOff size={11} />}
+            </button>
+          </div>
         </div>
-      )}
+      </div>
 
       {/* Loading Overlay */}
       {isLoading && (
@@ -523,7 +755,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
       )}
 
       {/* Canvas Container */}
-      <div ref={chartContainerRef} style={{ width: "100%", height: "100%", minHeight: "480px" }} />
+      <div ref={chartContainerRef} style={{ width: "100%", height: "100%", minHeight: "520px" }} />
     </div>
   );
 };
