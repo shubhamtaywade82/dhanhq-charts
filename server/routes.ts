@@ -88,13 +88,14 @@ router.get("/charts/intraday", async (req: Request, res: Response) => {
   }
 });
 
-// 6b. Daily Historical Candlestick Chart
+// 6b. Historical Intraday Candlestick Chart (same interval as active chart, max 90-day window)
 router.get("/charts/historical", async (req: Request, res: Response) => {
   try {
     const symbol = (req.query.symbol || "nifty").toString();
     const fromDate = req.query.fromDate ? req.query.fromDate.toString() : undefined;
     const toDate = req.query.toDate ? req.query.toDate.toString() : undefined;
-    const data = await MarketDataService.fetchHistoricalCandles(symbol, fromDate, toDate);
+    const interval = (req.query.interval || "15").toString();
+    const data = await MarketDataService.fetchHistoricalCandles(symbol, fromDate, toDate, interval);
     res.json(data);
   } catch (err: any) {
     res.status(err.status || 500).json({ error: err.message, details: err.details });

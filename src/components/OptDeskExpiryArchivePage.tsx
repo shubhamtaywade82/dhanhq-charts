@@ -632,133 +632,200 @@ addEventListener('resize',()=>{drawChart();renderAnalytics();lineCv(el('eqCv'),[
 </html>`;
   };
 
+  const meta = snapshot?.metadata;
+  const strikesCount = snapshot?.strikes ? Object.keys(snapshot.strikes).length : null;
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-      {/* REAL DATA CONTROLS HEADER */}
-      <div
-        className="glass-panel"
-        style={{
-          padding: "16px 20px",
-          borderRadius: "12px",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          flexWrap: "wrap",
-          gap: "14px",
-          background: "linear-gradient(135deg, rgba(15, 19, 28, 0.95) 0%, rgba(20, 26, 38, 0.95) 100%)",
-          border: "1px solid var(--border-color)",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          <div style={{ padding: "8px", background: "rgba(255, 180, 84, 0.12)", borderRadius: "8px", border: "1px solid #FFB800" }}>
-            <Database size={20} color="#FFB800" />
+    <div style={{ display: "flex", flexDirection: "column", gap: "0px" }}>
+      {/* ── PREMIUM HEADER ─────────────────────────────────────────────── */}
+      <div style={{
+        padding: "18px 24px",
+        background: "linear-gradient(135deg, rgba(12,16,26,0.98), rgba(18,24,36,0.98))",
+        borderBottom: "2px solid rgba(255,180,84,0.2)",
+        borderLeft: "4px solid #FFB800",
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: "16px",
+        borderRadius: "12px 12px 0 0",
+      }}>
+        {/* Left: Title */}
+        <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+          <div style={{ padding: "10px", background: "rgba(255,184,0,0.14)", borderRadius: "10px", border: "1px solid rgba(255,184,0,0.35)" }}>
+            <Database size={22} color="#FFB800" />
           </div>
           <div>
-            <div style={{ fontSize: "15px", fontWeight: 800, color: "white", letterSpacing: "0.5px" }}>
-              OPTDESK ▸ EXPIRY ARCHIVE (REAL DHANHQ REST API INTEGRATED)
+            <div style={{ fontSize: "16px", fontWeight: 900, color: "white", letterSpacing: "0.8px", fontFamily: "var(--font-mono)" }}>
+              OPTDESK ▸ EXPIRY ARCHIVE
             </div>
-            <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>
-              Connected to DhanHQ /v2/charts/intraday & /v2/charts/rollingoption REST endpoints
+            <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.45)", marginTop: "2px" }}>
+              Real DhanHQ Intraday Rolling Options Data • Expired Contract Replay
             </div>
           </div>
         </div>
 
-        {/* QUERY CONTROLS FORM */}
-        <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
-          <div>
-            <select
-              value={symbol}
-              onChange={(e) => {
-                setSymbol(e.target.value);
-                fetchRealData(e.target.value, fromDate, interval);
-              }}
-              style={{ padding: "8px 12px", background: "var(--bg-card)", border: "1px solid var(--border-color)", borderRadius: "6px", color: "white", fontSize: "12px", fontWeight: 700 }}
-            >
-              <option value="NIFTY">NIFTY (13)</option>
-              <option value="BANKNIFTY">BANKNIFTY (25)</option>
-              <option value="SENSEX">SENSEX (51)</option>
-            </select>
-          </div>
-
-          <div>
-            <input
-              type="date"
-              value={fromDate}
-              onChange={(e) => {
-                setFromDate(e.target.value);
-                fetchRealData(symbol, e.target.value, interval);
-              }}
-              style={{ padding: "8px 12px", background: "var(--bg-card)", border: "1px solid var(--border-color)", borderRadius: "6px", color: "white", fontSize: "12px", fontFamily: "var(--font-mono)" }}
-            />
-          </div>
-
-          <div>
-            <select
-              value={interval}
-              onChange={(e) => {
-                setInterval(e.target.value);
-                fetchRealData(symbol, fromDate, e.target.value);
-              }}
-              style={{ padding: "8px 12px", background: "var(--bg-card)", border: "1px solid var(--border-color)", borderRadius: "6px", color: "white", fontSize: "12px" }}
-            >
-              <option value="1">1 MINUTE (1m)</option>
-              <option value="5">5 MINUTES (5m)</option>
-              <option value="15">15 MINUTES (15m)</option>
-              <option value="60">60 MINUTES (1h)</option>
-            </select>
-          </div>
-
-          <button
-            onClick={() => fetchRealData()}
-            disabled={loading}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-              padding: "9px 18px",
-              background: "linear-gradient(135deg, #FFB800 0%, #FF8800 100%)",
-              color: "#0A0D14",
-              fontWeight: 800,
-              fontSize: "12px",
-              border: "none",
-              borderRadius: "6px",
-              cursor: loading ? "not-allowed" : "pointer",
-            }}
-          >
-            {loading ? <RefreshCw size={14} className="spin" /> : <Play size={14} />}
-            FETCH REAL DHANHQ DATA
-          </button>
+        {/* Right: Status badges */}
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+          {loading && (
+            <div style={{ display: "flex", alignItems: "center", gap: "6px", padding: "4px 10px", background: "rgba(255,184,0,0.12)", border: "1px solid rgba(255,184,0,0.35)", borderRadius: "20px", fontSize: "11px", color: "#FFB800", fontWeight: 700 }}>
+              <RefreshCw size={11} style={{ animation: "spin 1s linear infinite" }} />
+              FETCHING
+            </div>
+          )}
+          {meta && !loading && (
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: "5px", padding: "4px 10px", background: "rgba(0,245,160,0.1)", border: "1px solid rgba(0,245,160,0.3)", borderRadius: "20px", fontSize: "11px", color: "#00F5A0", fontWeight: 700 }}>
+                <CheckCircle2 size={11} />
+                LIVE DATA
+              </div>
+              {strikesCount && (
+                <div style={{ padding: "4px 10px", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "20px", fontSize: "11px", color: "rgba(255,255,255,0.7)", fontWeight: 700, fontFamily: "var(--font-mono)" }}>
+                  {strikesCount} STRIKES
+                </div>
+              )}
+              {meta.underlyingSpotPrice && (
+                <div style={{ padding: "4px 10px", background: "rgba(0,229,255,0.08)", border: "1px solid rgba(0,229,255,0.2)", borderRadius: "20px", fontSize: "11px", color: "var(--accent-cyan)", fontWeight: 700, fontFamily: "var(--font-mono)" }}>
+                  ₹{Number(meta.underlyingSpotPrice).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </div>
+              )}
+              {meta.tradingDate && (
+                <div style={{ padding: "4px 10px", background: "rgba(255,184,0,0.1)", border: "1px solid rgba(255,184,0,0.3)", borderRadius: "20px", fontSize: "11px", color: "#FFB800", fontWeight: 700, fontFamily: "var(--font-mono)" }}>
+                  {meta.tradingDate}
+                </div>
+              )}
+            </>
+          )}
         </div>
       </div>
 
-      {/* ERROR NOTICE IF ANY */}
-      {error && (
-        <div style={{ padding: "12px 18px", background: "rgba(255, 73, 92, 0.12)", border: "1px solid var(--accent-red)", borderRadius: "8px", color: "var(--accent-red)", fontSize: "12px", display: "flex", alignItems: "center", gap: "10px" }}>
-          <AlertCircle size={16} />
-          <span>{error}</span>
+      {/* ── CONTROLS BAR ───────────────────────────────────────────────── */}
+      <div style={{
+        padding: "12px 24px",
+        background: "rgba(10,14,22,0.96)",
+        borderBottom: "1px solid rgba(255,255,255,0.06)",
+        display: "flex",
+        alignItems: "flex-end",
+        gap: "16px",
+        flexWrap: "wrap",
+      }}>
+        {/* Symbol */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+          <span style={{ fontSize: "10px", fontWeight: 700, color: "rgba(255,255,255,0.35)", letterSpacing: "0.6px" }}>SYMBOL</span>
+          <select
+            value={symbol}
+            onChange={(e) => { setSymbol(e.target.value); fetchRealData(e.target.value, fromDate, interval); }}
+            style={{ padding: "7px 12px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "6px", color: "white", fontSize: "12px", fontWeight: 700, outline: "none" }}
+          >
+            <option value="NIFTY">NIFTY (13)</option>
+            <option value="BANKNIFTY">BANKNIFTY (25)</option>
+            <option value="SENSEX">SENSEX (51)</option>
+          </select>
+        </div>
+
+        {/* Date */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+          <span style={{ fontSize: "10px", fontWeight: 700, color: "rgba(255,255,255,0.35)", letterSpacing: "0.6px" }}>EXPIRY DATE</span>
+          <input
+            type="date"
+            value={fromDate}
+            onChange={(e) => { setFromDate(e.target.value); fetchRealData(symbol, e.target.value, interval); }}
+            style={{ padding: "7px 12px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "6px", color: "white", fontSize: "12px", fontFamily: "var(--font-mono)", outline: "none" }}
+          />
+        </div>
+
+        {/* Interval */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+          <span style={{ fontSize: "10px", fontWeight: 700, color: "rgba(255,255,255,0.35)", letterSpacing: "0.6px" }}>INTERVAL</span>
+          <select
+            value={interval}
+            onChange={(e) => { setInterval(e.target.value); fetchRealData(symbol, fromDate, e.target.value); }}
+            style={{ padding: "7px 12px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "6px", color: "white", fontSize: "12px", fontWeight: 600, outline: "none" }}
+          >
+            <option value="1">1m</option>
+            <option value="5">5m</option>
+            <option value="15">15m</option>
+            <option value="60">1h</option>
+          </select>
+        </div>
+
+        {/* Fetch button */}
+        <button
+          onClick={() => fetchRealData()}
+          disabled={loading}
+          style={{
+            display: "flex", alignItems: "center", gap: "8px",
+            padding: "8px 20px",
+            background: loading ? "rgba(255,184,0,0.3)" : "linear-gradient(135deg, #FFB800, #FF8C00)",
+            color: "#0A0D14", fontWeight: 800, fontSize: "12px",
+            border: "none", borderRadius: "6px",
+            cursor: loading ? "not-allowed" : "pointer",
+            letterSpacing: "0.4px",
+          }}
+        >
+          {loading ? <RefreshCw size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Play size={13} />}
+          {loading ? "FETCHING…" : "FETCH DATA"}
+        </button>
+
+        {/* Refresh icon button */}
+        <button
+          onClick={() => fetchRealData()}
+          disabled={loading}
+          title="Refresh"
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center",
+            width: "34px", height: "34px",
+            background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)",
+            borderRadius: "6px", color: "rgba(255,255,255,0.5)",
+            cursor: loading ? "not-allowed" : "pointer",
+          }}
+        >
+          <RefreshCw size={14} />
+        </button>
+      </div>
+
+      {/* ── STATUS STRIP ───────────────────────────────────────────────── */}
+      <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+      {loading && (
+        <div style={{ padding: "8px 24px", background: "rgba(255,184,0,0.07)", borderBottom: "1px solid rgba(255,184,0,0.15)", display: "flex", alignItems: "center", gap: "8px", fontSize: "11px", color: "#FFB800", fontWeight: 600 }}>
+          <RefreshCw size={12} style={{ animation: "spin 1s linear infinite" }} />
+          Fetching expired options from DhanHQ API…
+        </div>
+      )}
+      {error && !loading && (
+        <div style={{ padding: "8px 24px", background: "rgba(255,73,92,0.08)", borderBottom: "1px solid rgba(255,73,92,0.2)", display: "flex", alignItems: "center", gap: "8px", fontSize: "11px", color: "var(--accent-red)", fontWeight: 600 }}>
+          <AlertCircle size={12} />
+          {error}
+        </div>
+      )}
+      {!loading && !error && snapshot && (
+        <div style={{ padding: "8px 24px", background: "rgba(0,245,160,0.05)", borderBottom: "1px solid rgba(0,245,160,0.12)", display: "flex", alignItems: "center", gap: "8px", fontSize: "11px", color: "#00F5A0", fontWeight: 600 }}>
+          <CheckCircle2 size={12} />
+          Session loaded: {symbol} • {strikesCount} strikes • {fromDate}
+        </div>
+      )}
+      {!loading && !error && !snapshot && (
+        <div style={{ padding: "8px 24px", background: "rgba(255,255,255,0.02)", borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", gap: "8px", fontSize: "11px", color: "rgba(255,255,255,0.3)", fontWeight: 600 }}>
+          <ExternalLink size={12} />
+          No session loaded — select parameters above and click Fetch Data
         </div>
       )}
 
-      {/* EMBEDDED IFRAME RENDERING REAL DATA TRANSFORMATION */}
-      <div
-        style={{
-          height: "calc(100vh - 180px)",
-          width: "100%",
-          borderRadius: "12px",
-          overflow: "hidden",
-          border: "1px solid var(--border-color)",
-          background: "#0a0e15",
-        }}
-      >
+      {/* ── IFRAME CONTENT ─────────────────────────────────────────────── */}
+      <div style={{
+        height: "calc(100vh - 220px)",
+        width: "100%",
+        borderRadius: "0 0 12px 12px",
+        overflow: "hidden",
+        border: "1px solid rgba(255,255,255,0.06)",
+        borderTop: "none",
+        background: "#0a0e15",
+        boxShadow: "inset 0 0 0 1px rgba(255,180,84,0.06)",
+      }}>
         <iframe
           srcDoc={generateRealHtml()}
           title="OPTDESK Live Archive"
-          style={{
-            width: "100%",
-            height: "100%",
-            border: "none",
-            background: "#0a0e15",
-          }}
+          style={{ width: "100%", height: "100%", border: "none", background: "#0a0e15" }}
         />
       </div>
     </div>

@@ -31,11 +31,14 @@ export const TradingViewChart: React.FC<ChartProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [countdown, setCountdown] = useState<string>("00:00");
 
-  // Indicator Management State (SMA 20 & EMA 9)
+  // Indicator Management State (SMA 20 & EMA 9) — persisted to localStorage
   const [showIndicatorsPanel, setShowIndicatorsPanel] = useState(false);
-  const [indicatorVisibility, setIndicatorVisibility] = useState({
-    sma20: true,
-    ema9: true,
+  const [indicatorVisibility, setIndicatorVisibility] = useState(() => {
+    try {
+      const saved = localStorage.getItem("chart_indicator_visibility");
+      if (saved) return JSON.parse(saved) as { sma20: boolean; ema9: boolean };
+    } catch {}
+    return { sma20: true, ema9: true };
   });
 
   const chartRef = useRef<any>(null);
@@ -54,7 +57,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
   const targetVolumeRef = useRef<number | null>(null);
   const currentVisualVolumeRef = useRef<number | null>(null);
 
-  // Toggle Line Indicator Series Visibility dynamically
+  // Toggle Line Indicator Series Visibility dynamically — persists to localStorage
   const toggleIndicator = (key: "sma20" | "ema9") => {
     setIndicatorVisibility((prev) => {
       const nextVal = !prev[key];
@@ -63,16 +66,15 @@ export const TradingViewChart: React.FC<ChartProps> = ({
       } else if (key === "ema9" && emaSeriesRef.current) {
         emaSeriesRef.current.applyOptions({ visible: nextVal });
       }
-      return { ...prev, [key]: nextVal };
+      const next = { ...prev, [key]: nextVal };
+      try { localStorage.setItem("chart_indicator_visibility", JSON.stringify(next)); } catch {}
+      return next;
     });
   };
 
   // 1. Candle Countdown Timer (MM:SS)
   useEffect(() => {
-    const isSecondInterval = interval.endsWith("s");
-    const barSeconds = isSecondInterval
-      ? (parseInt(interval, 10) || 15)
-      : (parseInt(interval, 10) || 15) * 60;
+    const barSeconds = (parseInt(interval, 10) || 15) * 60;
 
     const updateCountdown = () => {
       const nowUnix = Math.floor(Date.now() / 1000);
@@ -105,12 +107,10 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     targetVolumeRef.current = null;
     currentVisualVolumeRef.current = null;
 
-    const fetchAndRender = async (isSilentUpdate = false) => {
+    const fetchAndRender = async () => {
       try {
-        if (!isSilentUpdate) {
-          setIsLoading(true);
-          setError(null);
-        }
+        setIsLoading(true);
+        setError(null);
 
         let candlesArray: any[] = [];
         if (customCandles && customCandles.length > 0) {
@@ -137,7 +137,10 @@ export const TradingViewChart: React.FC<ChartProps> = ({
           volume: Number(c.volume || 0),
         }));
 
-        allCandlesRef.current = formattedCandles;
+        // Only overwrite allCandlesRef on fresh mount (not during reload)
+        if (allCandlesRef.current.length === 0) {
+          allCandlesRef.current = formattedCandles;
+        }
 
         const formattedVolume = formattedCandles.map((c: any) => ({
           time: c.time,
@@ -216,6 +219,8 @@ export const TradingViewChart: React.FC<ChartProps> = ({
                 color: "#00E5FF",
                 lineWidth: 1.5,
                 title: "SMA 20",
+                priceLineVisible: false,
+                lastValueVisible: false,
                 visible: indicatorVisibility.sma20,
               });
               smaSeriesRef.current = smaSeries;
@@ -234,6 +239,8 @@ export const TradingViewChart: React.FC<ChartProps> = ({
               color: "#FFD700",
               lineWidth: 1.5,
               title: "EMA 9",
+              priceLineVisible: false,
+              lastValueVisible: false,
               visible: indicatorVisibility.ema9,
             });
             emaSeriesRef.current = emaSeries;
@@ -259,9 +266,18 @@ export const TradingViewChart: React.FC<ChartProps> = ({
               isFetchingHistoricalRef.current = true;
               setIsLazyLoading(true);
 
+              // Use the earliest loaded candle as toDate, go back 90 days (DhanHQ intraday limit)
+              const earliestTime = allCandlesRef.current.length > 0
+                ? allCandlesRef.current[0].time
+                : Math.floor(Date.now() / 1000);
+              const toDateObj = new Date(earliestTime * 1000);
+              const fromDateObj = new Date(earliestTime * 1000);
+              fromDateObj.setDate(fromDateObj.getDate() - 90);
+              const fmt = (d: Date) => d.toISOString().split("T")[0];
+
               try {
                 const histRes = await fetch(
-                  `/api/charts/historical?symbol=${encodeURIComponent(symbol)}&fromDate=2024-01-01`
+                  `/api/charts/historical?symbol=${encodeURIComponent(symbol)}&fromDate=${fmt(fromDateObj)}&toDate=${fmt(toDateObj)}&interval=${interval}`
                 );
                 const histJson = await histRes.json();
 
@@ -302,10 +318,6 @@ export const TradingViewChart: React.FC<ChartProps> = ({
               }
             }
           });
-        } else {
-          // Silent data re-sync from DhanHQ API
-          if (seriesRef.current) seriesRef.current.setData(formattedCandles);
-          if (volumeSeriesRef.current) volumeSeriesRef.current.setData(formattedVolume);
         }
 
         if (formattedCandles.length > 0) {
@@ -317,9 +329,9 @@ export const TradingViewChart: React.FC<ChartProps> = ({
           targetVolumeRef.current = last.volume;
         }
 
-        if (!isSilentUpdate) setIsLoading(false);
+        setIsLoading(false);
       } catch (err: any) {
-        if (isSubscribed && !isSilentUpdate) {
+        if (isSubscribed) {
           setError(err.message);
           setIsLoading(false);
         }
@@ -327,11 +339,6 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     };
 
     fetchAndRender();
-
-    // Auto-sync intraday candles with DhanHQ API every 5 seconds to keep closed & forming OHLC exact
-    const pollTimer = setInterval(() => {
-      fetchAndRender(true);
-    }, 5000);
 
     const resizeObserver = new ResizeObserver((entries) => {
       if (chart && entries[0] && entries[0].contentRect) {
@@ -348,7 +355,6 @@ export const TradingViewChart: React.FC<ChartProps> = ({
 
     return () => {
       isSubscribed = false;
-      clearInterval(pollTimer);
       resizeObserver.disconnect();
       if (chart) {
         chart.remove();
@@ -371,10 +377,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
       currentVisualVolumeRef.current = targetVolumeRef.current;
     }
 
-    const isSecondInterval = interval.endsWith("s");
-    const barSeconds = isSecondInterval
-      ? (parseInt(interval, 10) || 15)
-      : (parseInt(interval, 10) || 15) * 60;
+    const barSeconds = (parseInt(interval, 10) || 15) * 60;
 
     let animId: number;
 

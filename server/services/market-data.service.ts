@@ -157,4 +157,93 @@ export class MarketDataService {
 
     return { symbol: config.name, securityId: config.id, candles, isMock: true };
   }
+
+  /**
+   * Fetch intraday OHLCV candles at the given interval for a past date range.
+   * Used when the user scrolls left on the chart — keeps candle granularity
+   * consistent with the active timeframe (1m, 5m, 15m, etc.).
+   * DhanHQ intraday endpoint max window = 90 days.
+   */
+  public static async fetchHistoricalCandles(symbolKey: string, fromDate?: string, toDate?: string, interval: string = "15"): Promise<any> {
+    const client = await DhanAuthService.getDhanClient();
+    const config = this.getSymbolConfig(symbolKey);
+
+    // Clamp window to max 90 days (DhanHQ intraday limit)
+    const toObj = toDate ? new Date(toDate) : new Date();
+    const fromObj = fromDate ? new Date(fromDate) : (() => {
+      const d = new Date(toObj);
+      d.setDate(d.getDate() - 90);
+      return d;
+    })();
+
+    // Never exceed 90-day window
+    const maxFrom = new Date(toObj);
+    maxFrom.setDate(maxFrom.getDate() - 90);
+    if (fromObj < maxFrom) fromObj.setTime(maxFrom.getTime());
+
+    const fmt = (d: Date) => d.toISOString().split("T")[0];
+    const from = fmt(fromObj);
+    const to = fmt(toObj);
+
+    try {
+      const data: any = await DhanRateLimiter.execute(() =>
+        client.charts.intraday({
+          securityId: config.id,
+          exchangeSegment: config.segment as any,
+          instrument: config.instrument as any,
+          interval: (interval || "15") as any,
+          fromDate: from,
+          toDate: to,
+        })
+      );
+
+      if (data && (data.close || data.c) && (data.close?.length > 0 || data.c?.length > 0)) {
+        const closeArray = data.close || data.c;
+        const timeArray = data.start_Time || data.timestamp || [];
+        const openArray = data.open || data.o || [];
+        const highArray = data.high || data.h || [];
+        const lowArray = data.low || data.l || [];
+        const volArray = data.volume || data.v || [];
+
+        const intervalSec = interval.endsWith("s")
+          ? parseInt(interval, 10)
+          : (parseInt(interval, 10) || 15) * 60;
+
+        const candles = closeArray.map((c: number, idx: number) => ({
+          time: timeArray[idx] || Math.floor(fromObj.getTime() / 1000) + idx * intervalSec,
+          open: openArray[idx] || c,
+          high: highArray[idx] || c,
+          low: lowArray[idx] || c,
+          close: c,
+          volume: volArray[idx] || 1000,
+        }));
+
+        console.log(`✅ [Historical Intraday] Fetched ${candles.length} ${interval}m candles for ${config.name} (${from} → ${to})`);
+        return { symbol: config.name, securityId: config.id, candles, isMock: false };
+      }
+    } catch (err: any) {
+      console.warn(`⚠️ Historical intraday API notice for ${config.name}:`, err.message);
+    }
+
+    // Fallback: generate synthetic intraday candles for the window
+    const intervalSec = interval.endsWith("s")
+      ? parseInt(interval, 10)
+      : (parseInt(interval, 10) || 15) * 60;
+    const totalBars = Math.floor((toObj.getTime() - fromObj.getTime()) / 1000 / intervalSec);
+    const baseTime = Math.floor(fromObj.getTime() / 1000);
+    const fallbackCandles = Array.from({ length: Math.min(totalBars, 500) }, (_, i) => {
+      const time = baseTime + i * intervalSec;
+      const drift = (i - totalBars / 2) * 0.1;
+      return {
+        time,
+        open: config.basePrice + drift - 5,
+        high: config.basePrice + drift + 8,
+        low: config.basePrice + drift - 8,
+        close: config.basePrice + drift,
+        volume: 5000 + Math.floor(Math.random() * 5000),
+      };
+    });
+
+    return { symbol: config.name, securityId: config.id, candles: fallbackCandles, isMock: true };
+  }
 }

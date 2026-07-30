@@ -756,7 +756,7 @@ export function App() {
                     <span>{selectedSymbol.toUpperCase()} Intraday Candlesticks (Auto-Date Normalization)</span>
                   </div>
                   <div style={{ display: "flex", gap: "6px" }}>
-                    {["5s", "15s", "30s", "1", "5", "15", "60"].map((m) => (
+                    {["1", "3", "5", "15", "30", "60"].map((m) => (
                       <button
                         key={m}
                         onClick={() => setSelectedInterval(m)}
@@ -771,7 +771,7 @@ export function App() {
                           cursor: "pointer",
                         }}
                       >
-                        {m.endsWith("s") ? m : `${m}m`}
+                        {`${m}m`}
                       </button>
                     ))}
                   </div>
