@@ -24,9 +24,11 @@ import {
   TrendingUp,
   Zap,
 } from "lucide-react";
-import TradingViewChart from "./components/TradingViewChart";
-import MarketDepthStream from "./components/MarketDepthStream";
-import ExpiredOptionsTable from "./components/ExpiredOptionsTable";
+import { TradingViewChart } from "./components/TradingViewChart";
+import { MarketDepthStream } from "./components/MarketDepthStream";
+import { ExpiredOptionsTable } from "./components/ExpiredOptionsTable";
+import { OptionsResearchWorkbench } from "./components/research/OptionsResearchWorkbench";
+import { OptDeskExpiryArchivePage } from "./components/OptDeskExpiryArchivePage";
 
 interface TickData {
   symbol: string;
@@ -59,7 +61,7 @@ const SYMBOL_ID_MAP: Record<string, { id: string; segment: string; instrument: s
 };
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<"terminal" | "options" | "expired" | "bias" | "portfolio">(() => {
+  const [activeTab, setActiveTab] = useState<"terminal" | "options" | "expired" | "optdesk" | "bias" | "portfolio">(() => {
     return (localStorage.getItem("dhan_activeTab") as any) || "terminal";
   });
   const [selectedSymbol, setSelectedSymbol] = useState(() => {
@@ -102,6 +104,13 @@ export function App() {
   const [tick, setTick] = useState<TickData | null>(null);
   const [wsConnected, setWsConnected] = useState(false);
   const [session, setSession] = useState<SessionInfo | null>(null);
+  const wsRef = React.useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "subscribe", symbol: selectedSymbol }));
+    }
+  }, [selectedSymbol]);
 
   // Data states
   const [funds, setFunds] = useState<any>(null);
@@ -134,8 +143,8 @@ export function App() {
     expiryCode: "1",
     strike: "ATM",
     drvOptionType: "CALL",
-    interval: "15",
-    requiredData: ["open", "high", "low", "close", "volume"],
+    interval: "1",
+    requiredData: ["open", "high", "low", "close", "volume", "oi"],
     fromDate: "2026-06-24",
     toDate: "2026-07-28",
   });
@@ -176,6 +185,8 @@ export function App() {
     const highArray = target.high || target.h;
     const lowArray = target.low || target.l;
     const volumeArray = target.volume || target.v;
+    const oiArray = target.oi;
+    const spotArray = target.spot;
 
     if (Array.isArray(closeArray) && closeArray.length > 0) {
       for (let i = 0; i < closeArray.length; i++) {
@@ -197,6 +208,8 @@ export function App() {
         const highVal = highArray && highArray[i] !== undefined ? Number(highArray[i]) : Math.max(openVal, closeVal);
         const lowVal = lowArray && lowArray[i] !== undefined ? Number(lowArray[i]) : Math.min(openVal, closeVal);
         const volVal = volumeArray && volumeArray[i] !== undefined ? Number(volumeArray[i]) : 0;
+        const oiVal = oiArray && oiArray[i] !== undefined ? Number(oiArray[i]) : 0;
+        const spotVal = spotArray && spotArray[i] !== undefined ? Number(spotArray[i]) : 0;
 
         candles.push({
           time: timeNum,
@@ -205,6 +218,8 @@ export function App() {
           low: lowVal,
           close: closeVal,
           volume: volVal,
+          oi: oiVal,
+          spot: spotVal,
         });
       }
     } else if (Array.isArray(target)) {
@@ -229,6 +244,8 @@ export function App() {
         const highVal = Number(item.high ?? item.h ?? Math.max(openVal, closeVal));
         const lowVal = Number(item.low ?? item.l ?? Math.min(openVal, closeVal));
         const volVal = Number(item.volume ?? item.v ?? 0);
+        const oiVal = Number(item.oi ?? 0);
+        const spotVal = Number(item.spot ?? 0);
 
         candles.push({
           time: timeNum,
@@ -237,6 +254,8 @@ export function App() {
           low: lowVal,
           close: closeVal,
           volume: volVal,
+          oi: oiVal,
+          spot: spotVal,
         });
       }
     }
@@ -254,14 +273,14 @@ export function App() {
     const sym = selectedSymbol.toLowerCase();
     let spot = tick?.ltp || optionChain?.spotPrice || 0;
     if (!spot) {
-      if (sym === "nifty") spot = 24850;
-      else if (sym === "banknifty") spot = 52400;
-      else if (sym === "sensex") spot = 81200;
-      else if (sym === "reliance") spot = 3120;
-      else if (sym === "hdfcbank") spot = 1640;
-      else if (sym === "tcs") spot = 4250;
-      else if (sym === "infy") spot = 1850;
-      else spot = 20000;
+      if (sym === "nifty") spot = 24262.70;
+      else if (sym === "banknifty") spot = 56891.95;
+      else if (sym === "sensex") spot = 77652.95;
+      else if (sym === "reliance") spot = 1285.50;
+      else if (sym === "hdfcbank") spot = 750.50;
+      else if (sym === "tcs") spot = 4250.00;
+      else if (sym === "infy") spot = 1850.00;
+      else spot = 24262.70;
     }
 
     let step = 50;
@@ -361,6 +380,7 @@ export function App() {
 
     try {
       ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
       ws.onopen = () => {
         if (!isCleanedUp) {
           setWsConnected(true);
@@ -687,7 +707,8 @@ export function App() {
             {[
               { id: "terminal", label: "Real-Time Terminal", icon: BarChart2 },
               { id: "options", label: "Option Chain & Greeks", icon: Layers },
-              { id: "expired", label: "Expired Backtest", icon: Database },
+              { id: "expired", label: "Expired Research Workbench", icon: Database },
+              { id: "optdesk", label: "OPTDESK Expiry Archive", icon: Database },
               { id: "bias", label: "Multi-Timeframe Bias", icon: TrendingUp },
               { id: "portfolio", label: "Account & Ledger", icon: DollarSign },
             ].map((t) => {
@@ -928,384 +949,14 @@ export function App() {
             </div>
           )}
 
-          {/* TAB 3: EXPIRED OPTIONS BACKTEST */}
+          {/* TAB 3: EXPIRED OPTIONS HISTORICAL RESEARCH WORKBENCH */}
           {activeTab === "expired" && (
-            <div className="glass-panel" style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "20px" }}>
-              <div style={{ fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <Database size={18} color="var(--accent-cyan)" />
-                  <span>Expired Options Rolling Chart Historical Query Builder</span>
-                </div>
+            <OptionsResearchWorkbench />
+          )}
 
-                {/* SPOT PRICE & ATM BADGES */}
-                <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-                  <div style={{ fontSize: "11px", background: "rgba(0,229,255,0.1)", border: "1px solid var(--accent-cyan)", padding: "4px 10px", borderRadius: "6px", color: "var(--accent-cyan)" }} className="mono">
-                    SCRIP: {selectedSymbol.toUpperCase()} (ID: {expiredForm.securityId})
-                  </div>
-                  <div style={{ fontSize: "11px", background: "rgba(0,245,160,0.1)", border: "1px solid var(--accent-green)", padding: "4px 10px", borderRadius: "6px", color: "var(--accent-green)" }} className="mono">
-                    SPOT: ₹{scripSpotInfo.spot.toFixed(2)}
-                  </div>
-                  <div style={{ fontSize: "11px", background: "rgba(255,255,255,0.06)", border: "1px solid var(--border-color)", padding: "4px 10px", borderRadius: "6px", color: "white" }} className="mono">
-                    ATM: {scripSpotInfo.atmStrike}
-                  </div>
-                  <div style={{ fontSize: "11px", background: "rgba(255,184,0,0.12)", border: "1px solid #FFB800", padding: "4px 10px", borderRadius: "6px", color: "#FFB800" }} className="mono">
-                    TARGET: {scripSpotInfo.calculatedStrike} {expiredForm.drvOptionType} ({scripSpotInfo.moneynessTag.split(" ")[0]})
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px" }}>
-                <div>
-                  <label style={{ fontSize: "11px", color: "var(--text-muted)" }}>SECURITY ID</label>
-                  <input
-                    type="text"
-                    value={expiredForm.securityId}
-                    onChange={(e) => setExpiredForm({ ...expiredForm, securityId: e.target.value })}
-                    style={{ width: "100%", padding: "8px", background: "var(--bg-card)", border: "1px solid var(--border-color)", borderRadius: "6px", color: "white", fontFamily: "var(--font-mono)" }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ fontSize: "11px", color: "var(--text-muted)" }}>EXPIRY FLAG</label>
-                  <select
-                    value={expiredForm.expiryFlag}
-                    onChange={(e) => setExpiredForm({ ...expiredForm, expiryFlag: e.target.value })}
-                    style={{ width: "100%", padding: "8px", background: "var(--bg-card)", border: "1px solid var(--border-color)", borderRadius: "6px", color: "white" }}
-                  >
-                    <option value="WEEK">WEEK</option>
-                    <option value="MONTH">MONTH</option>
-                    <option value="WEEKLY">WEEKLY</option>
-                    <option value="MONTHLY">MONTHLY</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label style={{ fontSize: "11px", color: "var(--text-muted)" }}>EXPIRY CODE</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="10"
-                    value={expiredForm.expiryCode}
-                    onChange={(e) => setExpiredForm({ ...expiredForm, expiryCode: e.target.value })}
-                    style={{ width: "100%", padding: "8px", background: "var(--bg-card)", border: "1px solid var(--border-color)", borderRadius: "6px", color: "white", fontFamily: "var(--font-mono)" }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ fontSize: "11px", color: "var(--text-muted)" }}>OPTION TYPE</label>
-                  <select
-                    value={expiredForm.drvOptionType}
-                    onChange={(e) => setExpiredForm({ ...expiredForm, drvOptionType: e.target.value })}
-                    style={{ width: "100%", padding: "8px", background: "var(--bg-card)", border: "1px solid var(--border-color)", borderRadius: "6px", color: "white" }}
-                  >
-                    <option value="CALL">CALL</option>
-                    <option value="PUT">PUT</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label style={{ fontSize: "11px", color: "var(--text-muted)" }}>STRIKE PRESET / VALUE</label>
-                  <input
-                    type="text"
-                    value={expiredForm.strike}
-                    onChange={(e) => setExpiredForm({ ...expiredForm, strike: e.target.value })}
-                    placeholder="e.g. ATM, ATM+1, 24850"
-                    style={{ width: "100%", padding: "8px", background: "var(--bg-card)", border: "1px solid var(--border-color)", borderRadius: "6px", color: "white", fontFamily: "var(--font-mono)" }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ fontSize: "11px", color: "var(--text-muted)" }}>CANDLE INTERVAL</label>
-                  <select
-                    value={expiredForm.interval}
-                    onChange={(e) => setExpiredForm({ ...expiredForm, interval: e.target.value })}
-                    style={{ width: "100%", padding: "8px", background: "var(--bg-card)", border: "1px solid var(--border-color)", borderRadius: "6px", color: "white" }}
-                  >
-                    <option value="1">1 MINUTE</option>
-                    <option value="5">5 MINUTES</option>
-                    <option value="15">15 MINUTES</option>
-                    <option value="25">25 MINUTES</option>
-                    <option value="60">60 MINUTES (1 HOUR)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label style={{ fontSize: "11px", color: "var(--text-muted)" }}>FROM DATE</label>
-                  <input
-                    type="date"
-                    value={expiredForm.fromDate}
-                    onChange={(e) => setExpiredForm({ ...expiredForm, fromDate: e.target.value })}
-                    style={{ width: "100%", padding: "8px", background: "var(--bg-card)", border: "1px solid var(--border-color)", borderRadius: "6px", color: "white", fontFamily: "var(--font-mono)" }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ fontSize: "11px", color: "var(--text-muted)" }}>TO DATE</label>
-                  <input
-                    type="date"
-                    value={expiredForm.toDate}
-                    onChange={(e) => setExpiredForm({ ...expiredForm, toDate: e.target.value })}
-                    style={{ width: "100%", padding: "8px", background: "var(--bg-card)", border: "1px solid var(--border-color)", borderRadius: "6px", color: "white", fontFamily: "var(--font-mono)" }}
-                  />
-                </div>
-              </div>
-
-              {/* QUICK PRESETS TOOLBAR: DATE RANGES & STRIKE OFFSETS WITH CALCULATED STRIKE PRICES */}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
-                {/* STRIKE OFFSETS WITH CALCULATED ABSOLUTE PRICES */}
-                <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
-                  <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>STRIKE PRESETS:</span>
-                  {[
-                    { tag: "ATM", offset: 0 },
-                    { tag: "ATM+1", offset: 1 },
-                    { tag: "ATM-1", offset: -1 },
-                    { tag: "ATM+2", offset: 2 },
-                    { tag: "ATM-2", offset: -2 },
-                    { tag: "ATM+3", offset: 3 },
-                    { tag: "ATM-3", offset: -3 },
-                    { tag: "ATM+5", offset: 5 },
-                    { tag: "ATM-5", offset: -5 },
-                  ].map(({ tag, offset }) => {
-                    const strikeVal = scripSpotInfo.atmStrike + offset * scripSpotInfo.step;
-                    const isSelected = expiredForm.strike === tag;
-                    return (
-                      <button
-                        key={tag}
-                        onClick={() => setExpiredForm({ ...expiredForm, strike: tag })}
-                        style={{
-                          padding: "3px 8px",
-                          fontSize: "11px",
-                          background: isSelected ? "rgba(0, 229, 255, 0.2)" : "var(--bg-card)",
-                          border: isSelected ? "1px solid var(--accent-cyan)" : "1px solid var(--border-color)",
-                          color: isSelected ? "var(--accent-cyan)" : "var(--text-secondary)",
-                          borderRadius: "4px",
-                          cursor: "pointer",
-                        }}
-                        className="mono"
-                      >
-                        {tag} <span style={{ opacity: 0.75 }}>({strikeVal})</span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* DATE RANGE PRESETS */}
-                <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-                  <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>DATE RANGE:</span>
-                  {[
-                    { label: "30 Days (1M)", days: 30 },
-                    { label: "60 Days (2M)", days: 60 },
-                    { label: "90 Days (3M)", days: 90 },
-                    { label: "180 Days (Max)", days: 180 },
-                  ].map((preset) => (
-                    <button
-                      key={preset.days}
-                      onClick={() => setExpiredDatePreset(preset.days)}
-                      style={{
-                        padding: "3px 8px",
-                        fontSize: "11px",
-                        background: "var(--bg-card)",
-                        border: "1px solid var(--border-color)",
-                        color: "var(--accent-green)",
-                        borderRadius: "4px",
-                        cursor: "pointer",
-                      }}
-                      className="mono"
-                    >
-                      {preset.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* ACTION & VIEW SWITCHER BAR */}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
-                <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
-                  <button
-                    onClick={handleFetchExpired}
-                    style={{
-                      padding: "10px 22px",
-                      background: "linear-gradient(135deg, #00F5A0 0%, #00E5FF 100%)",
-                      color: "#0A0D14",
-                      fontWeight: 700,
-                      border: "none",
-                      borderRadius: "8px",
-                      cursor: "pointer",
-                    }}
-                  >
-                    REFRESH EXPIRED OPTIONS DATA
-                  </button>
-                  <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
-                    ⚡ Querying historical series from {expiredForm.fromDate} to {expiredForm.toDate}
-                  </span>
-                </div>
-
-                {/* VIEW MODE TOGGLE BUTTONS */}
-                <div style={{ display: "flex", gap: "4px", background: "#090C12", padding: "4px", borderRadius: "8px", border: "1px solid var(--border-color)" }}>
-                  <button
-                    onClick={() => setExpiredViewMode("CHART")}
-                    style={{
-                      padding: "6px 14px",
-                      fontSize: "11px",
-                      fontWeight: 700,
-                      borderRadius: "6px",
-                      border: "none",
-                      cursor: "pointer",
-                      background: expiredViewMode === "CHART" ? "var(--bg-card)" : "transparent",
-                      color: expiredViewMode === "CHART" ? "var(--accent-cyan)" : "var(--text-muted)",
-                    }}
-                  >
-                    📊 CHART VIEW
-                  </button>
-                  <button
-                    onClick={() => setExpiredViewMode("TABLE")}
-                    style={{
-                      padding: "6px 14px",
-                      fontSize: "11px",
-                      fontWeight: 700,
-                      borderRadius: "6px",
-                      border: "none",
-                      cursor: "pointer",
-                      background: expiredViewMode === "TABLE" ? "var(--bg-card)" : "transparent",
-                      color: expiredViewMode === "TABLE" ? "var(--accent-green)" : "var(--text-muted)",
-                    }}
-                  >
-                    📋 DATA TABLE VIEW
-                  </button>
-                  <button
-                    onClick={() => setExpiredViewMode("SPLIT")}
-                    style={{
-                      padding: "6px 14px",
-                      fontSize: "11px",
-                      fontWeight: 700,
-                      borderRadius: "6px",
-                      border: "none",
-                      cursor: "pointer",
-                      background: expiredViewMode === "SPLIT" ? "var(--bg-card)" : "transparent",
-                      color: expiredViewMode === "SPLIT" ? "white" : "var(--text-muted)",
-                    }}
-                  >
-                    🔀 SPLIT VIEW
-                  </button>
-                </div>
-              </div>
-
-              {expiredResult && (
-                <div style={{ marginTop: "10px", display: "flex", flexDirection: "column", gap: "16px" }}>
-                  {/* COMPREHENSIVE 6-CARD SPOT & MONEYNESS KPI BAR */}
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: "12px" }}>
-                    <div className="glass-card" style={{ padding: "12px", borderRadius: "8px" }}>
-                      <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>UNDERLYING SPOT</div>
-                      <div style={{ fontSize: "17px", fontWeight: 700, color: "var(--accent-green)" }} className="mono">
-                        ₹{scripSpotInfo.spot.toFixed(2)}
-                      </div>
-                    </div>
-
-                    <div className="glass-card" style={{ padding: "12px", borderRadius: "8px" }}>
-                      <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>ATM STRIKE</div>
-                      <div style={{ fontSize: "17px", fontWeight: 700, color: "white" }} className="mono">
-                        {scripSpotInfo.atmStrike}
-                      </div>
-                    </div>
-
-                    <div className="glass-card" style={{ padding: "12px", borderRadius: "8px" }}>
-                      <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>TARGET STRIKE</div>
-                      <div style={{ fontSize: "16px", fontWeight: 700, color: "var(--accent-cyan)" }} className="mono">
-                        {scripSpotInfo.calculatedStrike} ({expiredForm.strike})
-                      </div>
-                      <div style={{ fontSize: "10px", color: scripSpotInfo.diffFromSpot >= 0 ? "var(--accent-green)" : "var(--accent-red)" }} className="mono">
-                        {scripSpotInfo.diffFromSpot >= 0 ? "+" : ""}{scripSpotInfo.diffFromSpot.toFixed(1)} pts ({scripSpotInfo.diffPct.toFixed(2)}%)
-                      </div>
-                    </div>
-
-                    <div className="glass-card" style={{ padding: "12px", borderRadius: "8px" }}>
-                      <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>MONEYNESS TYPE</div>
-                      <div style={{ fontSize: "12px", fontWeight: 700, color: "#FFB800", marginTop: "4px" }}>
-                        {scripSpotInfo.moneynessTag}
-                      </div>
-                    </div>
-
-                    <div className="glass-card" style={{ padding: "12px", borderRadius: "8px" }}>
-                      <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>LAST EXPIRED PRICE</div>
-                      <div style={{ fontSize: "17px", fontWeight: 700, color: "var(--accent-green)" }} className="mono">
-                        {expiredCandles.length > 0 ? `₹${expiredCandles[expiredCandles.length - 1].close.toFixed(2)}` : "-"}
-                      </div>
-                    </div>
-
-                    <div className="glass-card" style={{ padding: "12px", borderRadius: "8px" }}>
-                      <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>PRICE HIGH / LOW</div>
-                      <div style={{ fontSize: "13px", fontWeight: 700, color: "white" }} className="mono">
-                        {expiredCandles.length > 0
-                          ? `₹${Math.max(...expiredCandles.map((c) => c.high)).toFixed(2)} / ₹${Math.min(...expiredCandles.map((c) => c.low)).toFixed(2)}`
-                          : "-"}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* DATA REPRESENTATION DISPLAY: CHART, TABLE, OR SPLIT */}
-                  {expiredCandles.length > 0 ? (
-                    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-                      {/* CHART COMPONENT (Visible in CHART or SPLIT mode) */}
-                      {(expiredViewMode === "CHART" || expiredViewMode === "SPLIT") && (
-                        <div
-                          style={{
-                            height: expiredViewMode === "SPLIT" ? "380px" : "520px",
-                            borderRadius: "12px",
-                            overflow: "hidden",
-                            border: "1px solid var(--border-color)",
-                            background: "#0F131C",
-                          }}
-                        >
-                          <TradingViewChart
-                            symbol={`${selectedSymbol.toUpperCase()} ${expiredForm.strike} ${expiredForm.drvOptionType}`}
-                            interval={expiredForm.interval}
-                            customCandles={expiredCandles}
-                          />
-                        </div>
-                      )}
-
-                      {/* DATA TABLE COMPONENT (Visible in TABLE or SPLIT mode) */}
-                      {(expiredViewMode === "TABLE" || expiredViewMode === "SPLIT") && (
-                        <ExpiredOptionsTable
-                          candles={expiredCandles}
-                          symbol={selectedSymbol.toUpperCase()}
-                          strike={expiredForm.strike}
-                          optionType={expiredForm.drvOptionType}
-                          spotInfo={scripSpotInfo}
-                        />
-                      )}
-                    </div>
-                  ) : (
-                    <div style={{ padding: "30px", background: "var(--bg-card)", border: "1px solid var(--border-color)", borderRadius: "8px", textAlign: "center", color: "var(--text-muted)" }}>
-                      ⚠️ No expired option candle points returned by DhanHQ API for the selected date range ({expiredForm.fromDate} to {expiredForm.toDate}) and strike ({expiredForm.strike} {expiredForm.drvOptionType}).
-                    </div>
-                  )}
-
-                  {/* TOGGLE RAW JSON VIEW */}
-                  <div>
-                    <button
-                      onClick={() => setShowRawJson(!showRawJson)}
-                      style={{
-                        padding: "6px 12px",
-                        fontSize: "11px",
-                        background: "var(--bg-card)",
-                        border: "1px solid var(--border-color)",
-                        borderRadius: "6px",
-                        color: "var(--text-secondary)",
-                        cursor: "pointer",
-                      }}
-                    >
-                      {showRawJson ? "▲ Hide Raw JSON Payload" : "▼ View Raw JSON Payload"}
-                    </button>
-                    {showRawJson && (
-                      <pre className="mono" style={{ marginTop: "8px", fontSize: "11px", color: "var(--text-secondary)", overflowX: "auto", maxHeight: "300px", background: "var(--bg-card)", padding: "12px", borderRadius: "8px" }}>
-                        {JSON.stringify(expiredResult, null, 2)}
-                      </pre>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
+          {/* TAB 3B: OPTDESK EXPIRY ARCHIVE DEDICATED PAGE */}
+          {activeTab === "optdesk" && (
+            <OptDeskExpiryArchivePage />
           )}
 
           {/* TAB 4: TECHNICAL ANALYSIS MULTI-TIMEFRAME BIAS ENGINE */}

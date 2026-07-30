@@ -1,0 +1,160 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ExpiredOptionsDailySnapshot",
+  "description": "JSON Schema for NIFTY Expired Options Daily Historical Rolling Series Snapshot across ATM-5 to ATM+5 (CE and PE) with all requiredData fields.",
+  "type": "object",
+  "required": ["metadata", "strikes"],
+  "properties": {
+    "metadata": {
+      "type": "object",
+      "required": [
+        "symbol",
+        "securityId",
+        "exchangeSegment",
+        "instrument",
+        "tradingDate",
+        "underlyingSpotPrice",
+        "atmStrike",
+        "strikeStep",
+        "requiredData",
+        "generatedAt"
+      ],
+      "properties": {
+        "symbol": {
+          "type": "string",
+          "example": "NIFTY"
+        },
+        "securityId": {
+          "type": "string",
+          "example": "13"
+        },
+        "exchangeSegment": {
+          "type": "string",
+          "enum": ["NSE_FNO", "BSE_FNO"],
+          "example": "NSE_FNO"
+        },
+        "instrument": {
+          "type": "string",
+          "enum": ["OPTIDX", "OPTSTK"],
+          "example": "OPTIDX"
+        },
+        "tradingDate": {
+          "type": "string",
+          "format": "date",
+          "example": "2026-07-28"
+        },
+        "underlyingSpotPrice": {
+          "type": "number",
+          "description": "Underlying Scrip Spot Price at snapshot calculation time",
+          "example": 24850
+        },
+        "atmStrike": {
+          "type": "number",
+          "description": "Calculated At-The-Money strike price",
+          "example": 24850
+        },
+        "strikeStep": {
+          "type": "number",
+          "description": "Strike step interval for the scrip (e.g. 50 for NIFTY)",
+          "example": 50
+        },
+        "requiredData": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "example": ["open", "high", "low", "close", "volume", "oi"]
+        },
+        "generatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "strikes": {
+      "type": "object",
+      "description": "Dictionary of strike offset objects from ATM-5 to ATM+5",
+      "patternProperties": {
+        "^ATM([+-]\\d+)?$": {
+          "type": "object",
+          "required": ["offset", "strikePrice", "ce", "pe"],
+          "properties": {
+            "offset": {
+              "type": "integer",
+              "minimum": -5,
+              "maximum": 5,
+              "description": "Strike offset relative to ATM (e.g. -5, 0, +5)"
+            },
+            "strikePrice": {
+              "type": "number",
+              "description": "Absolute strike price for the contract (e.g. 24600)"
+            },
+            "ce": {
+              "$ref": "#/definitions/OptionSeriesData"
+            },
+            "pe": {
+              "$ref": "#/definitions/OptionSeriesData"
+            }
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "OptionSeriesData": {
+      "type": ["object", "null"],
+      "description": "Parallel arrays containing intraday candle data for an option contract",
+      "required": ["timestamp", "open", "high", "low", "close", "volume", "oi"],
+      "properties": {
+        "timestamp": {
+          "type": "array",
+          "items": { "type": "integer" },
+          "description": "UNIX epoch timestamps (seconds)"
+        },
+        "open": {
+          "type": "array",
+          "items": { "type": "number" },
+          "description": "Opening prices for each candle"
+        },
+        "high": {
+          "type": "array",
+          "items": { "type": "number" },
+          "description": "High prices for each candle"
+        },
+        "low": {
+          "type": "array",
+          "items": { "type": "number" },
+          "description": "Low prices for each candle"
+        },
+        "close": {
+          "type": "array",
+          "items": { "type": "number" },
+          "description": "Closing prices for each candle"
+        },
+        "volume": {
+          "type": "array",
+          "items": { "type": "number" },
+          "description": "Traded volume for each candle"
+        },
+        "oi": {
+          "type": "array",
+          "items": { "type": "number" },
+          "description": "Open interest (OI) contract positions for each candle"
+        },
+        "iv": {
+          "type": "array",
+          "items": { "type": "number" },
+          "description": "Implied Volatility points if available"
+        },
+        "strike": {
+          "type": "array",
+          "items": { "type": "number" }
+        },
+        "spot": {
+          "type": "array",
+          "items": { "type": "number" }
+        }
+      }
+    }
+  }
+}

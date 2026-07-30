@@ -1,12 +1,17 @@
-import { Router, Request, Response } from "express";
+import express, { Router, Request, Response } from "express";
 import { getMarketSessionInfo } from "@shubhamtaywade82/dhanhq-ts";
 import { MarketDataService } from "./services/market-data.service";
 import { OptionChainService } from "./services/option-chain.service";
+import { OptionsAnalyticsService } from "./services/options-analytics.service";
+import { OptionsBacktestService } from "./services/options-backtest.service";
+import { SnapshotCacheService } from "./services/snapshot-cache.service";
 import { OrderExecutionService } from "./services/order-execution.service";
 import { RiskManagementService } from "./services/risk-management.service";
 import { TechnicalAnalysisService } from "./services/technical-analysis.service";
 
 export const router = Router();
+router.use(express.json({ limit: "50mb" }));
+router.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 // 1. Session Info
 router.get("/session-info", (req: Request, res: Response) => {
@@ -114,6 +119,69 @@ router.post("/charts/expired-options", async (req: Request, res: Response) => {
     res.json(result);
   } catch (err: any) {
     res.status(err.status || 500).json({ error: err.message, details: err.details });
+  }
+});
+
+router.post("/charts/expired-options-session", async (req: Request, res: Response) => {
+  try {
+    const snapshot = await SnapshotCacheService.getOrFetchSnapshot(req.body);
+    res.json(snapshot);
+  } catch (err: any) {
+    res.status(err.status || 500).json({ error: err.message, details: err.details });
+  }
+});
+
+router.post("/analytics/expired-options", async (req: Request, res: Response) => {
+  try {
+    let snapshot = req.body.snapshot;
+    if (!snapshot && (req.body.fromDate || req.body.symbol)) {
+      snapshot = await SnapshotCacheService.getOrFetchSnapshot(req.body);
+    }
+    const analytics = OptionsAnalyticsService.analyzeSession(snapshot);
+    res.json({ status: "success", data: analytics });
+  } catch (err: any) {
+    res.status(err.status || 500).json({ error: err.message, details: err.details });
+  }
+});
+
+router.post("/backtest/expired-options", async (req: Request, res: Response) => {
+  try {
+    let snapshot = req.body.snapshot;
+    if (!snapshot && (req.body.fromDate || req.body.symbol)) {
+      snapshot = await SnapshotCacheService.getOrFetchSnapshot(req.body);
+    }
+    const result = OptionsBacktestService.runBacktest(snapshot, req.body.config);
+    res.json({ status: "success", data: result });
+  } catch (err: any) {
+    res.status(err.status || 500).json({ error: err.message, details: err.details });
+  }
+});
+
+// Multi-Session Dataset Cache & Backtesting Endpoints
+router.get("/cache/sessions", (req: Request, res: Response) => {
+  try {
+    const sessions = SnapshotCacheService.listCachedSessions();
+    res.json({ status: "success", count: sessions.length, data: sessions });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/cache/get-session", async (req: Request, res: Response) => {
+  try {
+    const snapshot = await SnapshotCacheService.getOrFetchSnapshot(req.body);
+    res.json(snapshot);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/backtest/multi-session", async (req: Request, res: Response) => {
+  try {
+    const result = await SnapshotCacheService.runMultiSessionBacktest(req.body);
+    res.json({ status: "success", data: result });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
