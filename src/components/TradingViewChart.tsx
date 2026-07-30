@@ -340,7 +340,16 @@ export const TradingViewChart: React.FC<ChartProps> = ({
         const lastBarTime = lastCandleRef.current.time || 0;
 
         const rawTargetLtp = targetPriceRef.current;
-        const displayPrice = Number(rawTargetLtp.toFixed(2));
+
+        // Smooth 60 FPS LERP Interpolation for price line visual gliding
+        const priceDiff = rawTargetLtp - currentVisualPriceRef.current;
+        if (Math.abs(priceDiff) > 0.01) {
+          currentVisualPriceRef.current += priceDiff * 0.20;
+        } else {
+          currentVisualPriceRef.current = rawTargetLtp;
+        }
+
+        const displayPrice = Number(currentVisualPriceRef.current.toFixed(2));
 
         // Bar Boundary Protection: Lock closed candle & start NEW forming candle
         if (lastBarTime > 0 && targetBarTime >= lastBarTime + barSeconds) {
@@ -352,6 +361,8 @@ export const TradingViewChart: React.FC<ChartProps> = ({
             close: displayPrice,
             volume: 10,
           };
+          currentVisualVolumeRef.current = 10;
+          targetVolumeRef.current = 10;
           lastCandleRef.current = newCandle;
 
           try {
@@ -365,11 +376,22 @@ export const TradingViewChart: React.FC<ChartProps> = ({
             }
           } catch (e) {}
         } else {
-          // Update active forming candle directly to raw target LTP with zero sweeping
+          // Update active forming candle smoothly while evaluating high/low strictly on rawTargetLtp
           const activeCandle = { ...lastCandleRef.current };
           activeCandle.close = displayPrice;
           activeCandle.high = Math.max(activeCandle.high ?? rawTargetLtp, rawTargetLtp);
           activeCandle.low = Math.min(activeCandle.low ?? rawTargetLtp, rawTargetLtp);
+
+          // Volume LERP Step: smooth alpha = 0.18
+          if (targetVolumeRef.current !== null && currentVisualVolumeRef.current !== null) {
+            const volDiff = targetVolumeRef.current - currentVisualVolumeRef.current;
+            if (Math.abs(volDiff) > 0.1) {
+              currentVisualVolumeRef.current += volDiff * 0.18;
+            } else {
+              currentVisualVolumeRef.current = targetVolumeRef.current;
+            }
+            activeCandle.volume = Math.round(currentVisualVolumeRef.current);
+          }
 
           lastCandleRef.current = activeCandle;
 
