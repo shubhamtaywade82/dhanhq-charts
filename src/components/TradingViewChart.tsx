@@ -58,6 +58,14 @@ export const CANDLE_THEMES: Record<string, CandleTheme> = {
     volUpColor: "rgba(59, 130, 246, 0.35)",
     volDownColor: "rgba(236, 72, 153, 0.35)",
   },
+  bw: {
+    id: "bw",
+    name: "Black & White",
+    upColor: "#FFFFFF",
+    downColor: "#2A2E39",
+    volUpColor: "rgba(255, 255, 255, 0.4)",
+    volDownColor: "rgba(67, 70, 81, 0.5)",
+  },
 };
 
 interface ChartProps {
@@ -92,9 +100,46 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     return "emerald";
   });
 
+  // Hollow Candles Mode State (persisted to localStorage)
+  const [isHollowMode, setIsHollowMode] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("chart_hollow_candles") === "true";
+    } catch {}
+    return false;
+  });
+
   const activeTheme = CANDLE_THEMES[selectedThemeId] || CANDLE_THEMES.emerald;
   const activeThemeRef = useRef(activeTheme);
   activeThemeRef.current = activeTheme;
+
+  const isHollowRef = useRef(isHollowMode);
+  isHollowRef.current = isHollowMode;
+
+  // Helper to apply candle series options respecting active theme + hollow mode
+  const applyCandleSeriesOptions = (theme: CandleTheme, hollow: boolean) => {
+    if (!seriesRef.current) return;
+    if (hollow) {
+      seriesRef.current.applyOptions({
+        upColor: "#0F131C", // Hollow transparent body matching background
+        downColor: theme.downColor,
+        borderVisible: true,
+        borderUpColor: theme.upColor,
+        borderDownColor: theme.downColor,
+        wickUpColor: theme.upColor,
+        wickDownColor: theme.downColor,
+      });
+    } else {
+      seriesRef.current.applyOptions({
+        upColor: theme.upColor,
+        downColor: theme.downColor,
+        borderVisible: false,
+        borderUpColor: theme.upColor,
+        borderDownColor: theme.downColor,
+        wickUpColor: theme.upColor,
+        wickDownColor: theme.downColor,
+      });
+    }
+  };
 
   // Indicator Management State (SMA 20 & EMA 9) — persisted to localStorage
   const [showIndicatorsPanel, setShowIndicatorsPanel] = useState(false);
@@ -145,14 +190,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     activeThemeRef.current = theme;
     try { localStorage.setItem("chart_candle_theme", themeId); } catch {}
 
-    if (seriesRef.current) {
-      seriesRef.current.applyOptions({
-        upColor: theme.upColor,
-        downColor: theme.downColor,
-        wickUpColor: theme.upColor,
-        wickDownColor: theme.downColor,
-      });
-    }
+    applyCandleSeriesOptions(theme, isHollowRef.current);
 
     if (volumeSeriesRef.current && allCandlesRef.current.length > 0) {
       const updatedVolume = allCandlesRef.current.map((c: any) => ({
@@ -162,6 +200,15 @@ export const TradingViewChart: React.FC<ChartProps> = ({
       }));
       volumeSeriesRef.current.setData(updatedVolume);
     }
+  };
+
+  // Toggle Hollow Candles Mode (persisted to localStorage)
+  const toggleHollowMode = () => {
+    const nextHollow = !isHollowMode;
+    setIsHollowMode(nextHollow);
+    isHollowRef.current = nextHollow;
+    try { localStorage.setItem("chart_hollow_candles", String(nextHollow)); } catch {}
+    applyCandleSeriesOptions(activeThemeRef.current, nextHollow);
   };
 
   // 1. Candle Countdown Timer (MM:SS)
@@ -281,9 +328,11 @@ export const TradingViewChart: React.FC<ChartProps> = ({
           chartRef.current = chart;
 
           const candlestickSeries = chart.addSeries(CandlestickSeries, {
-            upColor: activeThemeRef.current.upColor,
+            upColor: isHollowRef.current ? "#0F131C" : activeThemeRef.current.upColor,
             downColor: activeThemeRef.current.downColor,
-            borderVisible: false,
+            borderVisible: isHollowRef.current,
+            borderUpColor: activeThemeRef.current.upColor,
+            borderDownColor: activeThemeRef.current.downColor,
             wickUpColor: activeThemeRef.current.upColor,
             wickDownColor: activeThemeRef.current.downColor,
           });
@@ -814,6 +863,32 @@ export const TradingViewChart: React.FC<ChartProps> = ({
                       </button>
                     );
                   })}
+                </div>
+
+                <div style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.5px", borderBottom: "1px solid rgba(255, 255, 255, 0.08)", paddingBottom: "4px", marginTop: "8px" }}>
+                  CANDLE BODY STYLE
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "2px" }}>
+                  <span style={{ fontSize: "11px", fontWeight: 600, color: isHollowMode ? "var(--accent-cyan)" : "#FFFFFF" }}>
+                    Hollow Candles
+                  </span>
+                  <button
+                    onClick={toggleHollowMode}
+                    style={{
+                      background: isHollowMode ? "rgba(0, 229, 255, 0.2)" : "rgba(255, 255, 255, 0.06)",
+                      border: isHollowMode ? "1px solid var(--accent-cyan)" : "1px solid rgba(255, 255, 255, 0.15)",
+                      color: isHollowMode ? "var(--accent-cyan)" : "var(--text-muted)",
+                      padding: "2px 8px",
+                      borderRadius: "4px",
+                      fontSize: "10px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      transition: "all 0.2s ease",
+                    }}
+                  >
+                    {isHollowMode ? "HOLLOW" : "FILLED"}
+                  </button>
                 </div>
               </div>
             )}
