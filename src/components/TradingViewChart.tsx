@@ -38,6 +38,7 @@ import {
   ICTJudasSwing,
   ICTAMDCycle,
 } from "../utils/ictEngine";
+import { scanSetups, SetupSignal } from "../utils/setupScanner";
 
 export interface CandleTheme {
   id: string;
@@ -237,6 +238,9 @@ export const TradingViewChart: React.FC<ChartProps> = ({
   const smcResultsRef = useRef<any>({ version: "" });
   const drawPendingRef = useRef(false);
   const lastDrawnCandleRef = useRef("");
+  const scanVersionRef = useRef("");
+  const scanPriceRef = useRef<number | null>(null);
+  const lastSignalKeyRef = useRef("");
 
   const candlesVersion = (candles: any[]) => {
     const last = candles[candles.length - 1];
@@ -520,6 +524,66 @@ export const TradingViewChart: React.FC<ChartProps> = ({
       return next;
     });
   };
+
+  // CE/PE Setup Scanner State (persisted to localStorage)
+  const [showSetupScan, setShowSetupScan] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("chart_show_setup_scan") !== "false";
+    } catch {}
+    return true;
+  });
+
+  const toggleSetupScan = () => {
+    setShowSetupScan((prev) => {
+      const next = !prev;
+      try { localStorage.setItem("chart_show_setup_scan", String(next)); } catch {}
+      return next;
+    });
+  };
+
+  const [setupSignal, setSetupSignal] = useState<SetupSignal | null>(null);
+
+  const runSetupScan = () => {
+    const price = targetPriceRef.current ?? lastCandleValRef.current?.close;
+    if (price === undefined || price === null) return;
+    const signal = scanSetups({
+      lastPrice: price,
+      fvg: getCached("fvg", () => detectFVGs(allCandlesRef.current)),
+      ob: getCached("ob", () => detectOrderBlocks(allCandlesRef.current)),
+      structure: getCached("structure", () => detectMarketStructure(latestNCandles(1000))),
+      liquidity: getCached("liquidity", () => detectLiquidityPools(latestNCandles(1000))),
+      pd: getCached("pd", () => detectPremiumDiscount(allCandlesRef.current)),
+      sessions: getCached("sessions", () => detectICTSessions(allCandlesRef.current)),
+      sb: getCached("sb", () => detectSilverBulletWindows(allCandlesRef.current)),
+      ote: getCached("ote", () => detectICTOTEZone(allCandlesRef.current)),
+      judas: getCached("judas", () => detectJudasSwings(allCandlesRef.current)),
+      amd: getCached("amd", () => detectAMDCycles(latestNCandles(1000))),
+      sd: getCached("sd", () => detectSupplyDemandZones(latestNCandles(1000))),
+      tl: getCached("tl", () => detectTrendlineLiquidity(latestNCandles(1000))),
+      cp: getCached("cp", () => detectCandlestickPatterns(latestNCandles(1000))),
+    });
+    const key = `${signal.direction}|${signal.bias}|${signal.alignedCount}`;
+    if (key !== lastSignalKeyRef.current) {
+      lastSignalKeyRef.current = key;
+      setSetupSignal(signal);
+    }
+  };
+
+  // Poll scan inputs (data version / live price) every 3s; re-emits only on
+  // meaningful signal changes so the UI does not re-render every tick
+  useEffect(() => {
+    if (!showSetupScan) return;
+    const scan = () => {
+      const version = candlesVersion(allCandlesRef.current);
+      const price = targetPriceRef.current ?? lastCandleValRef.current?.close ?? null;
+      if (scanVersionRef.current === version && scanPriceRef.current === price) return;
+      scanVersionRef.current = version;
+      scanPriceRef.current = price;
+      runSetupScan();
+    };
+    const id = setInterval(scan, 3000);
+    return () => clearInterval(id);
+  }, [showSetupScan]);
 
   // Single redraw trigger for every overlay feature toggle (rAF-coalesced)
   useEffect(() => {
@@ -2280,6 +2344,33 @@ export const TradingViewChart: React.FC<ChartProps> = ({
                     {isHollowMode ? "HOLLOW" : "FILLED"}
                   </button>
                 </div>
+
+                <div style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.5px", borderBottom: "1px solid rgba(255, 255, 255, 0.08)", paddingBottom: "4px", marginTop: "8px" }}>
+                  SETUP TOOLS
+                </div>
+
+                {/* CE/PE Setup Scanner Toggle */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "2px" }}>
+                  <span style={{ fontSize: "11px", fontWeight: 600, color: showSetupScan ? "#00F5A0" : "var(--text-muted)" }}>
+                    CE/PE Setup Scanner
+                  </span>
+                  <button
+                    onClick={toggleSetupScan}
+                    style={{
+                      background: showSetupScan ? "rgba(0, 245, 160, 0.2)" : "rgba(255, 255, 255, 0.06)",
+                      border: showSetupScan ? "1px solid #00F5A0" : "1px solid rgba(255, 255, 255, 0.15)",
+                      color: showSetupScan ? "#00F5A0" : "var(--text-muted)",
+                      padding: "2px 8px",
+                      borderRadius: "4px",
+                      fontSize: "10px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      transition: "all 0.2s ease",
+                    }}
+                  >
+                    {showSetupScan ? "ON" : "OFF"}
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -2570,6 +2661,85 @@ export const TradingViewChart: React.FC<ChartProps> = ({
           textAlign: "center"
         }}>
           ⚠️ {error}
+        </div>
+      )}
+
+      {/* CE/PE Setup Scanner Panel */}
+      {showSetupScan && setupSignal && (
+        <div style={{
+          position: "absolute",
+          bottom: "10px",
+          left: "12px",
+          zIndex: 12,
+          pointerEvents: "none",
+          width: "300px",
+          background: "rgba(15, 19, 28, 0.92)",
+          backdropFilter: "blur(12px)",
+          WebkitBackdropFilter: "blur(12px)",
+          border: "1px solid rgba(255, 255, 255, 0.12)",
+          borderRadius: "8px",
+          boxShadow: "0 8px 24px rgba(0, 0, 0, 0.5)",
+          padding: "8px 12px",
+          fontFamily: "var(--font-mono)",
+          fontSize: "10px",
+          color: "#8E9BAE",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px" }}>
+            <span style={{ fontWeight: 700, letterSpacing: "0.5px", fontSize: "9px", color: "var(--text-muted)" }}>SETUP SCANNER</span>
+            {setupSignal.direction === "CE_LONG" && (
+              <span style={{ fontWeight: 800, fontSize: "12px", color: "#00F5A0" }}>BUY CE LONG</span>
+            )}
+            {setupSignal.direction === "PE_LONG" && (
+              <span style={{ fontWeight: 800, fontSize: "12px", color: "#FF495C" }}>BUY PE LONG</span>
+            )}
+            {setupSignal.direction === "NO_TRADE" && (
+              <span style={{ fontWeight: 700, fontSize: "11px", color: "#8E9BAE" }}>NO TRADE</span>
+            )}
+          </div>
+
+          <div style={{ display: "flex", gap: "12px", marginBottom: "6px" }}>
+            <span>
+              BIAS{" "}
+              <span style={{
+                fontWeight: 700,
+                color: setupSignal.bias === "bullish" ? "#00F5A0" : setupSignal.bias === "bearish" ? "#FF495C" : "#8E9BAE",
+              }}>
+                {setupSignal.bias.toUpperCase()}
+              </span>{" "}
+              ({setupSignal.biasFactors.filter((f) => f.vote === "bullish").length}B/
+              {setupSignal.biasFactors.filter((f) => f.vote === "bearish").length}S)
+            </span>
+            <span>
+              CONFLUENCE{" "}
+              <span style={{ fontWeight: 700, color: setupSignal.alignedCount >= 3 ? "var(--accent-cyan)" : "#8E9BAE" }}>
+                {setupSignal.alignedCount}/6
+              </span>
+            </span>
+          </div>
+
+          {[...setupSignal.biasFactors, ...setupSignal.confluence].map((f) => (
+            <div key={f.name} style={{ display: "flex", alignItems: "center", gap: "5px", padding: "1px 0" }}>
+              <span style={{
+                width: "6px",
+                height: "6px",
+                borderRadius: "50%",
+                flexShrink: 0,
+                background: f.vote === "bullish" ? "#00F5A0" : f.vote === "bearish" ? "#FF495C" : "#3A4356",
+              }} />
+              <span style={{ fontWeight: 600, color: f.vote === "bullish" ? "#00F5A0" : f.vote === "bearish" ? "#FF495C" : "#6B7A90", width: "120px", flexShrink: 0 }}>
+                {f.name}
+              </span>
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#8E9BAE" }}>{f.detail}</span>
+            </div>
+          ))}
+
+          {setupSignal.notes.length > 0 && (
+            <div style={{ marginTop: "6px", borderTop: "1px solid rgba(255, 255, 255, 0.08)", paddingTop: "5px", color: "#6B7A90" }}>
+              {setupSignal.notes.map((n, i) => (
+                <div key={i} style={{ padding: "1px 0", lineHeight: 1.4 }}>{n}</div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
