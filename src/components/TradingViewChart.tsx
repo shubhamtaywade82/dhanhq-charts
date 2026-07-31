@@ -49,6 +49,37 @@ export interface CandleTheme {
   priceLineColor: string;
 }
 
+export const CandleCountdown = React.memo(function CandleCountdown({ interval }: { interval: string }) {
+  const [value, setValue] = useState("00:00");
+
+  useEffect(() => {
+    const barSeconds = (parseInt(interval, 10) || 15) * 60;
+
+    const update = () => {
+      const nowUnix = Math.floor(Date.now() / 1000);
+      const currentBarStart = Math.floor(nowUnix / barSeconds) * barSeconds;
+      const nextBarStart = currentBarStart + barSeconds;
+      const diff = Math.max(0, nextBarStart - nowUnix);
+
+      const mins = Math.floor(diff / 60).toString().padStart(2, "0");
+      const secs = (diff % 60).toString().padStart(2, "0");
+      setValue(`${mins}:${secs}`);
+    };
+
+    update();
+    const timer = setInterval(update, 1000);
+    return () => clearInterval(timer);
+  }, [interval]);
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "5px", color: "var(--accent-cyan)" }}>
+      <Clock size={11} />
+      <span style={{ fontSize: "10px", fontWeight: 700 }}>NEXT</span>
+      <span style={{ fontWeight: 800, fontSize: "11px" }}>{value}</span>
+    </div>
+  );
+});
+
 export const CANDLE_THEMES: Record<string, CandleTheme> = {
   emerald: {
     id: "emerald",
@@ -127,7 +158,6 @@ export const TradingViewChart: React.FC<ChartProps> = ({
   const [isLoading, setIsLoading] = useState(true);
   const [isLazyLoading, setIsLazyLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [countdown, setCountdown] = useState<string>("00:00");
 
   // Candle Theme State (persisted to localStorage)
   const [selectedThemeId, setSelectedThemeId] = useState<string>(() => {
@@ -201,6 +231,45 @@ export const TradingViewChart: React.FC<ChartProps> = ({
   const lastCandleValRef = useRef<any>(null);
   const allCandlesRef = useRef<any[]>([]);
 
+  // Detection results are cached per candle-data version so the 60fps LERP loop
+  // and scroll handlers re-project cached elements instead of re-running all 13
+  // detectors on every frame (detectors only depend on candle data, not toggles).
+  const smcResultsRef = useRef<any>({ version: "" });
+  const drawPendingRef = useRef(false);
+  const lastDrawnCandleRef = useRef("");
+
+  const candlesVersion = (candles: any[]) => {
+    const last = candles[candles.length - 1];
+    return last
+      ? `${candles.length}:${last.time}:${last.close}:${last.high}:${last.low}`
+      : `${candles.length}:`;
+  };
+
+  const getCached = <T,>(key: string, compute: () => T): T => {
+    const version = candlesVersion(allCandlesRef.current);
+    if (smcResultsRef.current.version !== version) {
+      smcResultsRef.current = { version };
+    }
+    if (smcResultsRef.current[key] === undefined) {
+      smcResultsRef.current[key] = compute();
+    }
+    return smcResultsRef.current[key] as T;
+  };
+
+  const latestNCandles = (n: number) => {
+    const candles = allCandlesRef.current;
+    return candles.length > n ? candles.slice(-n) : candles;
+  };
+
+  const scheduleDraw = () => {
+    if (drawPendingRef.current) return;
+    drawPendingRef.current = true;
+    requestAnimationFrame(() => {
+      drawPendingRef.current = false;
+      drawSMCBoxes();
+    });
+  };
+
   const isFetchingHistoricalRef = useRef(false);
 
   // Smooth LERP animation refs
@@ -260,10 +329,6 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     });
   };
 
-  useEffect(() => {
-    drawSMCBoxes();
-  }, [showFVG]);
-
   // SMC Order Blocks (OB) State
   const [showOB, setShowOB] = useState<boolean>(() => {
     try {
@@ -279,10 +344,6 @@ export const TradingViewChart: React.FC<ChartProps> = ({
       return next;
     });
   };
-
-  useEffect(() => {
-    drawSMCBoxes();
-  }, [showOB]);
 
   // SMC Market Structure (BOS & CHoCH) State
   const [showStructure, setShowStructure] = useState<boolean>(() => {
@@ -300,10 +361,6 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     });
   };
 
-  useEffect(() => {
-    drawSMCBoxes();
-  }, [showStructure]);
-
   // SMC Liquidity Pools & Sweeps (BSL / SSL) State
   const [showLiquidity, setShowLiquidity] = useState<boolean>(() => {
     try {
@@ -319,10 +376,6 @@ export const TradingViewChart: React.FC<ChartProps> = ({
       return next;
     });
   };
-
-  useEffect(() => {
-    drawSMCBoxes();
-  }, [showLiquidity]);
 
   // SMC Premium vs Discount Equilibrium (0.50 Level) State
   const [showEquilibrium, setShowEquilibrium] = useState<boolean>(() => {
@@ -340,10 +393,6 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     });
   };
 
-  useEffect(() => {
-    drawSMCBoxes();
-  }, [showEquilibrium]);
-
   // ICT Sessions & Kill Zones (Asia, London, NY) State
   const [showICTSessions, setShowICTSessions] = useState<boolean>(() => {
     try {
@@ -359,10 +408,6 @@ export const TradingViewChart: React.FC<ChartProps> = ({
       return next;
     });
   };
-
-  useEffect(() => {
-    drawSMCBoxes();
-  }, [showICTSessions]);
 
   // ICT Silver Bullet Windows (1-Hour High-Probability Windows) State
   const [showSilverBullet, setShowSilverBullet] = useState<boolean>(() => {
@@ -380,10 +425,6 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     });
   };
 
-  useEffect(() => {
-    drawSMCBoxes();
-  }, [showSilverBullet]);
-
   // ICT Optimal Trade Entry (OTE 0.618 - 0.705 ⭐ - 0.790) State
   const [showOTE, setShowOTE] = useState<boolean>(() => {
     try {
@@ -399,10 +440,6 @@ export const TradingViewChart: React.FC<ChartProps> = ({
       return next;
     });
   };
-
-  useEffect(() => {
-    drawSMCBoxes();
-  }, [showOTE]);
 
   // ICT Judas Swing Alerts (Session Open False Expansion & Fakeout Traps) State
   const [showJudas, setShowJudas] = useState<boolean>(() => {
@@ -420,10 +457,6 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     });
   };
 
-  useEffect(() => {
-    drawSMCBoxes();
-  }, [showJudas]);
-
   // ICT AMD Power of 3 (Accumulation → Manipulation → Distribution) State
   const [showAMD, setShowAMD] = useState<boolean>(() => {
     try {
@@ -439,10 +472,6 @@ export const TradingViewChart: React.FC<ChartProps> = ({
       return next;
     });
   };
-
-  useEffect(() => {
-    drawSMCBoxes();
-  }, [showAMD]);
 
   // Phase 3 — Supply & Demand Zones (Fresh / Tested origin boxes)
   const [showSD, setShowSD] = useState<boolean>(() => {
@@ -460,10 +489,6 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     });
   };
 
-  useEffect(() => {
-    drawSMCBoxes();
-  }, [showSD]);
-
   // Phase 3 — Trendline Liquidity (Diagonal Support & Resistance with touch count + breakout)
   const [showTL, setShowTL] = useState<boolean>(() => {
     try {
@@ -479,10 +504,6 @@ export const TradingViewChart: React.FC<ChartProps> = ({
       return next;
     });
   };
-
-  useEffect(() => {
-    drawSMCBoxes();
-  }, [showTL]);
 
   // Phase 3 — Candlestick Reversal Patterns (Pinbar, Engulfing, Inside Bar)
   const [showCP, setShowCP] = useState<boolean>(() => {
@@ -500,9 +521,37 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     });
   };
 
+  // Single redraw trigger for every overlay feature toggle (rAF-coalesced)
   useEffect(() => {
-    drawSMCBoxes();
-  }, [showCP]);
+    scheduleDraw();
+  }, [
+    showFVG, showOB, showStructure, showLiquidity, showEquilibrium,
+    showICTSessions, showSilverBullet, showOTE, showJudas, showAMD,
+    showSD, showTL, showCP,
+  ]);
+
+  // Latest overlay visibility flags, read from refs inside drawSMCBoxes so the
+  // rAF/scroll/loop closures never render stale toggles
+  const smcFlagsRef = useRef({
+    fvg: true, ob: true, structure: true, liquidity: true, equilibrium: true,
+    ictSessions: true, silverBullet: true, ote: true, judas: true, amd: true,
+    sd: true, tl: true, cp: true,
+  });
+  smcFlagsRef.current = {
+    fvg: showFVG,
+    ob: showOB,
+    structure: showStructure,
+    liquidity: showLiquidity,
+    equilibrium: showEquilibrium,
+    ictSessions: showICTSessions,
+    silverBullet: showSilverBullet,
+    ote: showOTE,
+    judas: showJudas,
+    amd: showAMD,
+    sd: showSD,
+    tl: showTL,
+    cp: showCP,
+  };
 
   const smcCanvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -515,11 +564,14 @@ export const TradingViewChart: React.FC<ChartProps> = ({
 
     const width = chartContainerRef.current?.clientWidth || canvas.width;
     const height = chartContainerRef.current?.clientHeight || canvas.height;
-    if (canvas.width !== width || canvas.height !== height) {
-      canvas.width = width;
-      canvas.height = height;
+    const dpr = window.devicePixelRatio || 1;
+    const renderWidth = Math.round(width * dpr);
+    const renderHeight = Math.round(height * dpr);
+    if (canvas.width !== renderWidth || canvas.height !== renderHeight) {
+      canvas.width = renderWidth;
+      canvas.height = renderHeight;
     }
-
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
 
     const timeScale = chartRef.current.timeScale();
@@ -528,8 +580,8 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     const maxVisibleX = width - 70; // Hard boundary to prevent elements from bleeding into price scale axis
 
     // 1. Draw Shaded Valid Active FVG Boxes
-    if (showFVG && allCandlesRef.current.length >= 3) {
-      const activeFVGs = detectFVGs(allCandlesRef.current)
+    if (smcFlagsRef.current.fvg && allCandlesRef.current.length >= 3) {
+      const activeFVGs = getCached("fvg", () => detectFVGs(allCandlesRef.current))
         .filter((f) => !f.mitigated)
         .slice(-4);
 
@@ -562,8 +614,8 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     }
 
     // 2. Draw Shaded Valid Active OB Boxes
-    if (showOB && allCandlesRef.current.length >= 5) {
-      const activeOBs = detectOrderBlocks(allCandlesRef.current)
+    if (smcFlagsRef.current.ob && allCandlesRef.current.length >= 5) {
+      const activeOBs = getCached("ob", () => detectOrderBlocks(allCandlesRef.current))
         .filter((o) => !o.mitigated)
         .slice(-3);
 
@@ -596,8 +648,8 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     }
 
     // 3. Draw Market Structure Lines (Macro/Major BOS & CHoCH + Micro/Internal iBOS & iCHoCH)
-    if (showStructure && allCandlesRef.current.length >= 10) {
-      const structBreaks = detectMarketStructure(allCandlesRef.current).slice(-8);
+    if (smcFlagsRef.current.structure && allCandlesRef.current.length >= 10) {
+      const structBreaks = getCached("structure", () => detectMarketStructure(latestNCandles(1000))).slice(-8);
 
       structBreaks.forEach((sb) => {
         const yLine = series.priceToCoordinate(sb.level);
@@ -655,8 +707,8 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     }
 
     // 4. Draw Liquidity Pools (BSL & SSL) and Sweep Badges
-    if (showLiquidity && allCandlesRef.current.length >= 10) {
-      const pools = detectLiquidityPools(allCandlesRef.current).slice(-6);
+    if (smcFlagsRef.current.liquidity && allCandlesRef.current.length >= 10) {
+      const pools = getCached("liquidity", () => detectLiquidityPools(latestNCandles(1000))).slice(-6);
 
       pools.forEach((pool) => {
         const yLine = series.priceToCoordinate(pool.level);
@@ -717,8 +769,8 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     }
 
     // 5. Draw Premium vs. Discount Equilibrium Zones (0.50 Midline)
-    if (showEquilibrium && allCandlesRef.current.length >= 20) {
-      const pd = detectPremiumDiscount(allCandlesRef.current);
+    if (smcFlagsRef.current.equilibrium && allCandlesRef.current.length >= 20) {
+      const pd = getCached("pd", () => detectPremiumDiscount(allCandlesRef.current));
       if (pd) {
         const yHigh = series.priceToCoordinate(pd.swingHigh);
         const yLow = series.priceToCoordinate(pd.swingLow);
@@ -770,8 +822,8 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     }
 
     // 6. Draw ICT Sessions & Kill Zones (Asia Range, London KZ, New York KZ)
-    if (showICTSessions && allCandlesRef.current.length >= 10) {
-      const sessions = detectICTSessions(allCandlesRef.current).slice(-10);
+    if (smcFlagsRef.current.ictSessions && allCandlesRef.current.length >= 10) {
+      const sessions = getCached("sessions", () => detectICTSessions(allCandlesRef.current)).slice(-10);
 
       sessions.forEach((s) => {
         const xStart = timeScale.timeToCoordinate(s.startTime);
@@ -819,8 +871,8 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     }
 
     // 7. Draw ICT Silver Bullet Windows (London SB, NY AM SB, NY PM SB)
-    if (showSilverBullet && allCandlesRef.current.length >= 10) {
-      const sbWindows = detectSilverBulletWindows(allCandlesRef.current).slice(-6);
+    if (smcFlagsRef.current.silverBullet && allCandlesRef.current.length >= 10) {
+      const sbWindows = getCached("sb", () => detectSilverBulletWindows(allCandlesRef.current)).slice(-6);
 
       sbWindows.forEach((sb) => {
         const xStart = timeScale.timeToCoordinate(sb.startTime);
@@ -870,8 +922,8 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     }
 
     // 8. Draw ICT Optimal Trade Entry (OTE Zone: 0.618 - 0.705 ⭐ - 0.790 Fib Levels)
-    if (showOTE && allCandlesRef.current.length >= 20) {
-      const ote = detectICTOTEZone(allCandlesRef.current);
+    if (smcFlagsRef.current.ote && allCandlesRef.current.length >= 20) {
+      const ote = getCached("ote", () => detectICTOTEZone(allCandlesRef.current));
       if (ote) {
         const y618 = series.priceToCoordinate(ote.fib618);
         const y705 = series.priceToCoordinate(ote.fib705);
@@ -921,8 +973,8 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     }
 
     // 9. Draw ICT Judas Swing Alert Badges (Session Open False Expansion / Fakeout Traps)
-    if (showJudas && allCandlesRef.current.length >= 15) {
-      const judasItems = detectJudasSwings(allCandlesRef.current).slice(-6);
+    if (smcFlagsRef.current.judas && allCandlesRef.current.length >= 15) {
+      const judasItems = getCached("judas", () => detectJudasSwings(allCandlesRef.current)).slice(-6);
 
       judasItems.forEach((j) => {
         const yLine = series.priceToCoordinate(j.level);
@@ -955,8 +1007,8 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     }
 
     // 10. Draw ICT AMD Power of 3 (Accumulation → Manipulation → Distribution) Cycle Labels
-    if (showAMD && allCandlesRef.current.length >= 20) {
-      const amdCycles = detectAMDCycles(allCandlesRef.current).slice(-3);
+    if (smcFlagsRef.current.amd && allCandlesRef.current.length >= 20) {
+      const amdCycles = getCached("amd", () => detectAMDCycles(latestNCandles(1000))).slice(-3);
 
       amdCycles.forEach((cycle) => {
         const isBull = cycle.trend === "BULLISH";
@@ -1037,8 +1089,8 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     }
 
     // 11. Draw Supply & Demand Zones (Fresh = vivid, Tested = dimmed border)
-    if (showSD && allCandlesRef.current.length >= 10) {
-      const sdZones = detectSupplyDemandZones(allCandlesRef.current).slice(-6);
+    if (smcFlagsRef.current.sd && allCandlesRef.current.length >= 10) {
+      const sdZones = getCached("sd", () => detectSupplyDemandZones(latestNCandles(1000))).slice(-6);
 
       sdZones.forEach((zone) => {
         const yTop = series.priceToCoordinate(zone.top);
@@ -1087,8 +1139,8 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     }
 
     // 12. Draw Trendline Liquidity (Diagonal Support & Resistance with touch count + breakout alerts)
-    if (showTL && allCandlesRef.current.length >= 20) {
-      const trendlines = detectTrendlineLiquidity(allCandlesRef.current);
+    if (smcFlagsRef.current.tl && allCandlesRef.current.length >= 20) {
+      const trendlines = getCached("tl", () => detectTrendlineLiquidity(latestNCandles(1000)));
 
       trendlines.forEach((tl) => {
         const isRes = tl.type === "RESISTANCE";
@@ -1104,17 +1156,22 @@ export const TradingViewChart: React.FC<ChartProps> = ({
         if (x1 === null || x2 === null || y1 === null || y2 === null) return;
         if (x1 >= maxVisibleX && x2 >= maxVisibleX) return;
 
-        // Extend line to the right edge of the visible chart
+        // Project the line to the latest candle; never anchor on the price axis
         const slope = x2 !== x1 ? (y2 - y1) / (x2 - x1) : 0;
-        const xEnd = Math.min(maxVisibleX, x2 + (maxVisibleX - x2));
+        const latestTime = lastCandleValRef.current?.time ?? allCandlesRef.current[allCandlesRef.current.length - 1]?.time;
+        const latestX = latestTime ? timeScale.timeToCoordinate(latestTime) : null;
+        const xEnd = latestX === null ? maxVisibleX : Math.min(maxVisibleX, Math.max(x2, latestX));
         const yEnd = y2 + slope * (xEnd - x2);
 
         const activeColor = isRes ? "#FF495C" : "#00F5A0";
         const strokeColor = isBroken ? "rgba(255,255,255,0.25)" : isSwept ? "#FFD700" : activeColor;
 
+        const xStart = Math.max(0, x1);
+        const yStart = x1 < 0 ? y2 + slope * (xStart - x2) : y1;
+
         ctx.beginPath();
-        ctx.moveTo(Math.max(0, x1), y1);
-        ctx.lineTo(Math.min(maxVisibleX, xEnd), yEnd);
+        ctx.moveTo(xStart, yStart);
+        ctx.lineTo(xEnd, yEnd);
 
         ctx.strokeStyle = strokeColor;
         ctx.lineWidth = isActive ? (tl.touchCount >= 4 ? 2.0 : 1.5) : 1;
@@ -1138,8 +1195,8 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     }
 
     // 13. Draw Candlestick Reversal Patterns (Pinbar / Engulfing / Inside Bar)
-    if (showCP && allCandlesRef.current.length >= 5) {
-      const cpItems = detectCandlestickPatterns(allCandlesRef.current);
+    if (smcFlagsRef.current.cp && allCandlesRef.current.length >= 5) {
+      const cpItems = getCached("cp", () => detectCandlestickPatterns(latestNCandles(1000)));
 
       cpItems.forEach((cp) => {
         const xC = timeScale.timeToCoordinate(cp.candleTime);
@@ -1201,27 +1258,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     applyCandleSeriesOptions(activeThemeRef.current, nextHollow);
   };
 
-  // 1. Candle Countdown Timer (MM:SS)
-  useEffect(() => {
-    const barSeconds = (parseInt(interval, 10) || 15) * 60;
-
-    const updateCountdown = () => {
-      const nowUnix = Math.floor(Date.now() / 1000);
-      const currentBarStart = Math.floor(nowUnix / barSeconds) * barSeconds;
-      const nextBarStart = currentBarStart + barSeconds;
-      const diff = Math.max(0, nextBarStart - nowUnix);
-
-      const mins = Math.floor(diff / 60).toString().padStart(2, "0");
-      const secs = (diff % 60).toString().padStart(2, "0");
-      setCountdown(`${mins}:${secs}`);
-    };
-
-    updateCountdown();
-    const timer = setInterval(updateCountdown, 1000);
-    return () => clearInterval(timer);
-  }, [interval]);
-
-  // 2. Initial Chart Render & Authoritative Data Sync
+  // 1. Initial Chart Render & Authoritative Data Sync
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
@@ -1347,7 +1384,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
           volumeSeries.setData(formattedVolume);
 
           // Draw 2D SMC Shaded Box Overlays
-          drawSMCBoxes();
+          scheduleDraw();
 
           if (showIndicators && formattedCandles.length > 9) {
             // 1. SMA 20
@@ -1398,7 +1435,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
 
           // Scroll listener for Lazy Loading & SMC Canvas Box redraw on scroll/zoom
           chart.timeScale().subscribeVisibleLogicalRangeChange(async (newRange: any) => {
-            drawSMCBoxes();
+            scheduleDraw();
             if (!newRange || isFetchingHistoricalRef.current || (customCandles && customCandles.length > 0)) return;
 
             if (newRange.from < 5) {
@@ -1447,6 +1484,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
 
                     candlestickSeries.setData(combined);
                     volumeSeries.setData(combinedVolume);
+                    scheduleDraw();
                   }
                 }
               } catch (err) {
@@ -1522,7 +1560,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
           if (volumeSeriesRef.current) {
             volumeSeriesRef.current.setData(formattedVolume);
           }
-          drawSMCBoxes();
+          scheduleDraw();
         }
       } catch (e) {}
     }, 60000);
@@ -1667,7 +1705,12 @@ export const TradingViewChart: React.FC<ChartProps> = ({
             }
           } catch (e) {}
         }
-        drawSMCBoxes();
+        const drawnCandle = lastCandleValRef.current;
+        const candleKey = drawnCandle ? `${drawnCandle.time}:${drawnCandle.close}:${drawnCandle.high}:${drawnCandle.low}` : "";
+        if (candleKey !== lastDrawnCandleRef.current) {
+          lastDrawnCandleRef.current = candleKey;
+          scheduleDraw();
+        }
       }
 
       animId = requestAnimationFrame(animateLerp);
@@ -1760,11 +1803,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
           <span style={{ color: "rgba(255, 255, 255, 0.2)" }}>•</span>
 
           {/* NEXT CANDLE COUNTDOWN */}
-          <div style={{ display: "flex", alignItems: "center", gap: "5px", color: "var(--accent-cyan)" }}>
-            <Clock size={11} />
-            <span style={{ fontSize: "10px", fontWeight: 700 }}>NEXT</span>
-            <span style={{ fontWeight: 800, fontSize: "11px" }}>{countdown}</span>
-          </div>
+          <CandleCountdown interval={interval} />
         </div>
 
         {/* ROW 2: Indicators Bar positioned directly below Status Line */}
