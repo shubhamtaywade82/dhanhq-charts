@@ -165,6 +165,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
               horzLines: { color: "rgba(255, 255, 255, 0.05)" },
             },
             timeScale: {
+              rightOffset: 5,
               timeVisible: true,
               borderColor: "rgba(255, 255, 255, 0.1)",
             },
@@ -257,6 +258,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
           }
 
           chart.timeScale().fitContent();
+          chart.timeScale().applyOptions({ rightOffset: 5 });
 
           // Scroll listener for Lazy Loading
           chart.timeScale().subscribeVisibleLogicalRangeChange(async (newRange: any) => {
