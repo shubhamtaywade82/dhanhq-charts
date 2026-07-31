@@ -39,6 +39,27 @@ export interface MarketStructureBreak {
   mitigated: boolean;
 }
 
+export interface LiquidityPoolPattern {
+  id: string;
+  type: "BSL" | "SSL";
+  level: number;
+  startTime: number;
+  swept: boolean;
+  sweepTime?: number;
+  sweepCandleTime?: number;
+}
+
+export interface PremiumDiscountRange {
+  swingHigh: number;
+  swingLow: number;
+  equilibrium: number;
+  ote618: number;
+  ote790: number;
+  startTime: number;
+  highTime: number;
+  lowTime: number;
+}
+
 /**
  * Detect Fair Value Gaps (FVG) across intraday candlestick series.
  */
@@ -192,14 +213,13 @@ export function detectOrderBlocks(candles: CandleData[], minImpulseMult = 1.5): 
 }
 
 /**
- * Detect Market Structure Breaks (BOS & CHoCH) categorized by Major (Macro) and Internal (Micro) structures.
+ * Detect Market Structure Breaks (BOS & CHoCH).
  */
 export function detectMarketStructure(candles: CandleData[]): MarketStructureBreak[] {
   if (!candles || candles.length < 15) return [];
 
   const breaks: MarketStructureBreak[] = [];
 
-  // Helper pass for a specific swing length
   const scanStructurePass = (swingLength: number, category: "MAJOR" | "INTERNAL") => {
     const swingHighs: { index: number; time: number; price: number }[] = [];
     const swingLows: { index: number; time: number; price: number }[] = [];
@@ -226,7 +246,6 @@ export function detectMarketStructure(candles: CandleData[]): MarketStructureBre
     for (let i = swingLength; i < candles.length; i++) {
       const candle = candles[i];
 
-      // Check recent swing high breaks
       const prevHighs = swingHighs.filter((h) => h.index < i);
       const lastHigh = prevHighs[prevHighs.length - 1];
 
@@ -249,7 +268,6 @@ export function detectMarketStructure(candles: CandleData[]): MarketStructureBre
         }
       }
 
-      // Check recent swing low breaks
       const prevLows = swingLows.filter((l) => l.index < i);
       const lastLow = prevLows[prevLows.length - 1];
 
@@ -274,10 +292,147 @@ export function detectMarketStructure(candles: CandleData[]): MarketStructureBre
     }
   };
 
-  // Run Major Structure Pass (Macro: swingLength = 7)
   scanStructurePass(7, "MAJOR");
-  // Run Internal Structure Pass (Micro: swingLength = 3)
   scanStructurePass(3, "INTERNAL");
 
   return breaks;
+}
+
+/**
+ * Detect Liquidity Pools (BSL/SSL) & Liquidity Sweeps.
+ */
+export function detectLiquidityPools(candles: CandleData[], tolerancePct = 0.05): LiquidityPoolPattern[] {
+  if (!candles || candles.length < 10) return [];
+
+  const pools: LiquidityPoolPattern[] = [];
+  const swingLength = 4;
+
+  const highs: { time: number; price: number; index: number }[] = [];
+  const lows: { time: number; price: number; index: number }[] = [];
+
+  for (let i = swingLength; i < candles.length - swingLength; i++) {
+    let isHigh = true;
+    let isLow = true;
+
+    for (let k = i - swingLength; k <= i + swingLength; k++) {
+      if (k === i) continue;
+      if (candles[k].high >= candles[i].high) isHigh = false;
+      if (candles[k].low <= candles[i].low) isLow = false;
+    }
+
+    if (isHigh) highs.push({ time: candles[i].time, price: candles[i].high, index: i });
+    if (isLow) lows.push({ time: candles[i].time, price: candles[i].low, index: i });
+  }
+
+  for (let a = 0; a < highs.length - 1; a++) {
+    for (let b = a + 1; b < highs.length; b++) {
+      const diffPct = (Math.abs(highs[a].price - highs[b].price) / highs[a].price) * 100;
+      if (diffPct <= tolerancePct) {
+        const poolLevel = Math.max(highs[a].price, highs[b].price);
+        const startTime = highs[a].time;
+
+        let swept = false;
+        let sweepTime: number | undefined;
+
+        for (let j = highs[b].index + 1; j < candles.length; j++) {
+          const c = candles[j];
+          if (c.high > poolLevel && c.close < poolLevel) {
+            swept = true;
+            sweepTime = c.time;
+            break;
+          }
+        }
+
+        pools.push({
+          id: `bsl-${startTime}-${highs[b].time}`,
+          type: "BSL",
+          level: poolLevel,
+          startTime,
+          swept,
+          sweepTime,
+          sweepCandleTime: sweepTime,
+        });
+
+        break;
+      }
+    }
+  }
+
+  for (let a = 0; a < lows.length - 1; a++) {
+    for (let b = a + 1; b < lows.length; b++) {
+      const diffPct = (Math.abs(lows[a].price - lows[b].price) / lows[a].price) * 100;
+      if (diffPct <= tolerancePct) {
+        const poolLevel = Math.min(lows[a].price, lows[b].price);
+        const startTime = lows[a].time;
+
+        let swept = false;
+        let sweepTime: number | undefined;
+
+        for (let j = lows[b].index + 1; j < candles.length; j++) {
+          const c = candles[j];
+          if (c.low < poolLevel && c.close > poolLevel) {
+            swept = true;
+            sweepTime = c.time;
+            break;
+          }
+        }
+
+        pools.push({
+          id: `ssl-${startTime}-${lows[b].time}`,
+          type: "SSL",
+          level: poolLevel,
+          startTime,
+          swept,
+          sweepTime,
+          sweepCandleTime: sweepTime,
+        });
+
+        break;
+      }
+    }
+  }
+
+  return pools;
+}
+
+/**
+ * Detect Premium vs. Discount Dealing Range Equilibrium (0.50 Level & OTE Fibs).
+ */
+export function detectPremiumDiscount(candles: CandleData[], lookback = 100): PremiumDiscountRange | null {
+  if (!candles || candles.length < 20) return null;
+
+  const slice = candles.slice(-Math.min(candles.length, lookback));
+  let maxHigh = -Infinity;
+  let minLow = Infinity;
+  let highTime = slice[0].time;
+  let lowTime = slice[0].time;
+
+  slice.forEach((c) => {
+    if (c.high > maxHigh) {
+      maxHigh = c.high;
+      highTime = c.time;
+    }
+    if (c.low < minLow) {
+      minLow = c.low;
+      lowTime = c.time;
+    }
+  });
+
+  if (maxHigh <= minLow) return null;
+
+  const equilibrium = (maxHigh + minLow) / 2;
+  const ote618 = minLow + (maxHigh - minLow) * 0.618;
+  const ote790 = minLow + (maxHigh - minLow) * 0.790;
+  const startTime = Math.min(highTime, lowTime);
+
+  return {
+    swingHigh: maxHigh,
+    swingLow: minLow,
+    equilibrium,
+    ote618,
+    ote790,
+    startTime,
+    highTime,
+    lowTime,
+  };
 }

@@ -11,10 +11,15 @@ import {
   detectFVGs,
   detectOrderBlocks,
   detectMarketStructure,
+  detectLiquidityPools,
+  detectPremiumDiscount,
   FVGPattern,
   OrderBlockPattern,
   MarketStructureBreak,
+  LiquidityPoolPattern,
+  PremiumDiscountRange,
 } from "../utils/smcEngine";
+import { detectICTSessions, ICTSession } from "../utils/ictEngine";
 
 export interface CandleTheme {
   id: string;
@@ -281,9 +286,69 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     drawSMCBoxes();
   }, [showStructure]);
 
+  // SMC Liquidity Pools & Sweeps (BSL / SSL) State
+  const [showLiquidity, setShowLiquidity] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("chart_show_liquidity") !== "false";
+    } catch {}
+    return true;
+  });
+
+  const toggleLiquidity = () => {
+    setShowLiquidity((prev) => {
+      const next = !prev;
+      try { localStorage.setItem("chart_show_liquidity", String(next)); } catch {}
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    drawSMCBoxes();
+  }, [showLiquidity]);
+
+  // SMC Premium vs Discount Equilibrium (0.50 Level) State
+  const [showEquilibrium, setShowEquilibrium] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("chart_show_equilibrium") !== "false";
+    } catch {}
+    return true;
+  });
+
+  const toggleEquilibrium = () => {
+    setShowEquilibrium((prev) => {
+      const next = !prev;
+      try { localStorage.setItem("chart_show_equilibrium", String(next)); } catch {}
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    drawSMCBoxes();
+  }, [showEquilibrium]);
+
+  // ICT Sessions & Kill Zones (Asia, London, NY) State
+  const [showICTSessions, setShowICTSessions] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("chart_show_ict_sessions") !== "false";
+    } catch {}
+    return true;
+  });
+
+  const toggleICTSessions = () => {
+    setShowICTSessions((prev) => {
+      const next = !prev;
+      try { localStorage.setItem("chart_show_ict_sessions", String(next)); } catch {}
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    drawSMCBoxes();
+  }, [showICTSessions]);
+
   const smcCanvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Render 2D Shaded Rectangle Boxes for FVGs & OBs + Market Structure Lines (BOS/CHoCH)
+  // Render 2D Shaded Rectangle Boxes for FVGs & OBs + Market Structure Lines (BOS/CHoCH) + Liquidity Pools (BSL/SSL) + Equilibrium (P/D) + ICT Sessions
   const drawSMCBoxes = () => {
     const canvas = smcCanvasRef.current;
     if (!canvas || !chartRef.current || !seriesRef.current) return;
@@ -392,9 +457,6 @@ export const TradingViewChart: React.FC<ChartProps> = ({
 
           if (lineWidth <= 5 || startX >= maxVisibleX) return;
 
-          // Color & Line Style Scheme:
-          // Major (Macro): Bullish = Mint (#00F5A0), Bearish = Crimson (#FF495C), Thicker line
-          // Internal (Micro): Bullish = Cyan (#00E5FF), Bearish = Pink (#EC4899), Fine line
           let strokeColor = isBull ? "#00F5A0" : "#FF495C";
           if (!isMajor) {
             strokeColor = isBull ? "#00E5FF" : "#EC4899";
@@ -403,9 +465,6 @@ export const TradingViewChart: React.FC<ChartProps> = ({
           ctx.strokeStyle = strokeColor;
           ctx.lineWidth = isMajor ? (isChoch ? 2.0 : 1.5) : (isChoch ? 1.2 : 1.0);
 
-          // Line Dash:
-          // Major BOS = Long dash [6, 4], Major CHoCH = Solid []
-          // Internal BOS = Fine Dotted [2, 3], Internal CHoCH = Fine Solid []
           if (isMajor) {
             ctx.setLineDash(isChoch ? [] : [6, 4]);
           } else {
@@ -418,9 +477,6 @@ export const TradingViewChart: React.FC<ChartProps> = ({
           ctx.stroke();
           ctx.setLineDash([]);
 
-          // Centered Labels:
-          // Major -> "MAJOR BOS 🟢" / "MAJOR CHoCH 🔴"
-          // Internal -> "iBOS 🟢" / "iCHoCH 🔴"
           let labelText = "";
           if (isMajor) {
             labelText = isChoch ? (isBull ? "MAJOR CHoCH 🟢" : "MAJOR CHoCH 🔴") : (isBull ? "MAJOR BOS 🟢" : "MAJOR BOS 🔴");
@@ -435,6 +491,170 @@ export const TradingViewChart: React.FC<ChartProps> = ({
           ctx.font = isMajor ? "bold 10px monospace" : "bold 9px monospace";
           ctx.textAlign = "center";
           ctx.fillText(labelText, centerX, labelY);
+          ctx.textAlign = "left";
+        }
+      });
+    }
+
+    // 4. Draw Liquidity Pools (BSL & SSL) and Sweep Badges
+    if (showLiquidity && allCandlesRef.current.length >= 10) {
+      const pools = detectLiquidityPools(allCandlesRef.current).slice(-6);
+
+      pools.forEach((pool) => {
+        const yLine = series.priceToCoordinate(pool.level);
+        const xStart = timeScale.timeToCoordinate(pool.startTime);
+        const targetEnd = pool.swept ? (pool.sweepTime || pool.startTime) : allCandlesRef.current[allCandlesRef.current.length - 1].time;
+        const xEnd = timeScale.timeToCoordinate(targetEnd);
+
+        if (yLine !== null) {
+          const isBSL = pool.type === "BSL";
+          const startX = xStart !== null ? Math.max(0, xStart) : 0;
+          const endX = xEnd !== null ? Math.min(maxVisibleX, xEnd) : maxVisibleX;
+          const lineWidth = endX - startX;
+
+          if (lineWidth <= 5 || startX >= maxVisibleX) return;
+
+          const color = isBSL ? "#00E5FF" : "#EC4899";
+          ctx.strokeStyle = color;
+          ctx.lineWidth = pool.swept ? 1.5 : 1.0;
+
+          ctx.setLineDash([2, 2]);
+          ctx.beginPath();
+          ctx.moveTo(startX, yLine);
+          ctx.lineTo(endX, yLine);
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          const labelText = isBSL
+            ? (pool.swept ? "BSL SWEEPT ⚡" : "BSL (Equal Highs)")
+            : (pool.swept ? "SSL SWEEPT ⚡" : "SSL (Equal Lows)");
+          const centerX = startX + lineWidth / 2;
+          const labelY = isBSL ? yLine - 4 : yLine + 11;
+
+          ctx.fillStyle = pool.swept ? (isBSL ? "#00F5A0" : "#FF495C") : color;
+          ctx.font = "bold 9px monospace";
+          ctx.textAlign = "center";
+          ctx.fillText(labelText, centerX, labelY);
+          ctx.textAlign = "left";
+
+          if (pool.swept && pool.sweepTime) {
+            const xSweep = timeScale.timeToCoordinate(pool.sweepTime);
+            if (xSweep !== null && xSweep < maxVisibleX) {
+              ctx.fillStyle = isBSL ? "rgba(0, 245, 160, 0.25)" : "rgba(255, 73, 92, 0.25)";
+              ctx.fillRect(xSweep - 22, isBSL ? yLine - 22 : yLine + 5, 44, 14);
+
+              ctx.strokeStyle = isBSL ? "#00F5A0" : "#FF495C";
+              ctx.lineWidth = 1;
+              ctx.strokeRect(xSweep - 22, isBSL ? yLine - 22 : yLine + 5, 44, 14);
+
+              ctx.fillStyle = "#FFFFFF";
+              ctx.font = "bold 8px monospace";
+              ctx.textAlign = "center";
+              ctx.fillText("SWEEPT ⚡", xSweep, isBSL ? yLine - 12 : yLine + 15);
+              ctx.textAlign = "left";
+            }
+          }
+        }
+      });
+    }
+
+    // 5. Draw Premium vs. Discount Equilibrium Zones (0.50 Midline)
+    if (showEquilibrium && allCandlesRef.current.length >= 20) {
+      const pd = detectPremiumDiscount(allCandlesRef.current);
+      if (pd) {
+        const yHigh = series.priceToCoordinate(pd.swingHigh);
+        const yLow = series.priceToCoordinate(pd.swingLow);
+        const yEq = series.priceToCoordinate(pd.equilibrium);
+        const xStart = timeScale.timeToCoordinate(pd.startTime);
+
+        if (yHigh !== null && yLow !== null && yEq !== null) {
+          const startX = xStart !== null ? Math.max(0, xStart) : 0;
+          const boxWidth = Math.max(30, maxVisibleX - startX);
+
+          if (startX < maxVisibleX) {
+            // A. Premium Zone (Overvalued / Sell Zone)
+            ctx.fillStyle = "rgba(255, 73, 92, 0.05)";
+            ctx.fillRect(startX, yHigh, boxWidth, yEq - yHigh);
+
+            // B. Discount Zone (Undervalued / Buy Zone)
+            ctx.fillStyle = "rgba(0, 245, 160, 0.05)";
+            ctx.fillRect(startX, yEq, boxWidth, yLow - yEq);
+
+            // C. 0.50 Equilibrium Midline
+            ctx.strokeStyle = "#FFD700";
+            ctx.lineWidth = 1.2;
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath();
+            ctx.moveTo(startX, yEq);
+            ctx.lineTo(maxVisibleX, yEq);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Centered Midline Label
+            const centerX = startX + boxWidth / 2;
+            ctx.fillStyle = "#FFD700";
+            ctx.font = "bold 9px monospace";
+            ctx.textAlign = "center";
+            ctx.fillText("0.50 EQUILIBRIUM", centerX, yEq - 4);
+
+            // Premium & Discount Corner Watermark Tags
+            ctx.fillStyle = "rgba(255, 73, 92, 0.7)";
+            ctx.font = "bold 9px monospace";
+            ctx.textAlign = "right";
+            ctx.fillText("PREMIUM (SELL ZONE)", maxVisibleX - 10, yHigh + 14);
+
+            ctx.fillStyle = "rgba(0, 245, 160, 0.7)";
+            ctx.fillText("DISCOUNT (BUY ZONE)", maxVisibleX - 10, yLow - 6);
+            ctx.textAlign = "left";
+          }
+        }
+      }
+    }
+
+    // 6. Draw ICT Sessions & Kill Zones (Asia Range, London KZ, New York KZ)
+    if (showICTSessions && allCandlesRef.current.length >= 10) {
+      const sessions = detectICTSessions(allCandlesRef.current).slice(-10);
+
+      sessions.forEach((s) => {
+        const xStart = timeScale.timeToCoordinate(s.startTime);
+        const xEnd = timeScale.timeToCoordinate(s.endTime);
+
+        if (xStart !== null) {
+          const startX = Math.max(0, xStart);
+          const endX = xEnd !== null ? Math.min(maxVisibleX, xEnd) : maxVisibleX;
+          const bandWidth = endX - startX;
+
+          if (bandWidth <= 4 || startX >= maxVisibleX) return;
+
+          let bgStyle = "rgba(147, 51, 234, 0.08)";
+          let strokeStyle = "#9333EA";
+          let badgeBg = "#9333EA";
+
+          if (s.type === "LONDON") {
+            bgStyle = "rgba(0, 229, 255, 0.09)";
+            strokeStyle = "#00E5FF";
+            badgeBg = "#00E5FF";
+          } else if (s.type === "NEW_YORK") {
+            bgStyle = "rgba(255, 170, 0, 0.09)";
+            strokeStyle = "#FFAA00";
+            badgeBg = "#FFAA00";
+          }
+
+          ctx.fillStyle = bgStyle;
+          ctx.fillRect(startX, 0, bandWidth, height);
+
+          ctx.strokeStyle = strokeStyle;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(startX, 2);
+          ctx.lineTo(endX, 2);
+          ctx.stroke();
+
+          const centerX = startX + bandWidth / 2;
+          ctx.fillStyle = badgeBg;
+          ctx.font = "bold 8px monospace";
+          ctx.textAlign = "center";
+          ctx.fillText(s.name, centerX, 12);
           ctx.textAlign = "left";
         }
       });
@@ -1236,6 +1456,56 @@ export const TradingViewChart: React.FC<ChartProps> = ({
                   </button>
                 </div>
 
+                {/* 4. Liquidity Pools & Sweeps (BSL / SSL) */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "4px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span style={{ width: "8px", height: "2px", background: "#00E5FF" }} />
+                    <span style={{ fontSize: "11px", fontWeight: 600, color: showLiquidity ? "#FFFFFF" : "var(--text-muted)" }}>
+                      Liquidity (BSL / SSL)
+                    </span>
+                  </div>
+                  <button
+                    onClick={toggleLiquidity}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: showLiquidity ? "var(--accent-cyan)" : "var(--text-muted)",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      padding: "2px",
+                    }}
+                    title={showLiquidity ? "Hide Liquidity Pools & Sweeps" : "Show Liquidity Pools & Sweeps"}
+                  >
+                    {showLiquidity ? <Eye size={13} /> : <EyeOff size={13} />}
+                  </button>
+                </div>
+
+                {/* 5. ICT Sessions & Kill Zones (Asia, London, NY) */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "4px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span style={{ width: "8px", height: "8px", borderRadius: "2px", background: "#9333EA" }} />
+                    <span style={{ fontSize: "11px", fontWeight: 600, color: showICTSessions ? "#FFFFFF" : "var(--text-muted)" }}>
+                      ICT Kill Zones (Asia/LDN/NY)
+                    </span>
+                  </div>
+                  <button
+                    onClick={toggleICTSessions}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: showICTSessions ? "#9333EA" : "var(--text-muted)",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      padding: "2px",
+                    }}
+                    title={showICTSessions ? "Hide ICT Kill Zones" : "Show ICT Kill Zones"}
+                  >
+                    {showICTSessions ? <Eye size={13} /> : <EyeOff size={13} />}
+                  </button>
+                </div>
+
                 <div style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.5px", borderBottom: "1px solid rgba(255, 255, 255, 0.08)", paddingBottom: "4px", marginTop: "8px" }}>
                   CANDLE BODY STYLE
                 </div>
@@ -1337,6 +1607,51 @@ export const TradingViewChart: React.FC<ChartProps> = ({
               title={showStructure ? "Hide Market Structure" : "Show Market Structure"}
             >
               {showStructure ? <Eye size={11} /> : <EyeOff size={11} />}
+            </button>
+          </div>
+
+          <span style={{ color: "rgba(255, 255, 255, 0.2)" }}>•</span>
+
+          {/* SMC Liq Quick Eye Badge */}
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <span style={{ width: "8px", height: "2px", background: showLiquidity ? "#00E5FF" : "var(--text-muted)" }} />
+            <span style={{ fontSize: "10px", fontWeight: 700, color: showLiquidity ? "#00E5FF" : "var(--text-muted)" }}>SMC Liq</span>
+            <button
+              onClick={toggleLiquidity}
+              style={{ background: "transparent", border: "none", color: showLiquidity ? "var(--accent-cyan)" : "var(--text-muted)", cursor: "pointer", padding: 0, display: "flex", alignItems: "center" }}
+              title={showLiquidity ? "Hide Liquidity Pools & Sweeps" : "Show Liquidity Pools & Sweeps"}
+            >
+              {showLiquidity ? <Eye size={11} /> : <EyeOff size={11} />}
+            </button>
+          </div>
+
+          <span style={{ color: "rgba(255, 255, 255, 0.2)" }}>•</span>
+
+          {/* SMC P/D Quick Eye Badge */}
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <span style={{ width: "8px", height: "2px", background: showEquilibrium ? "#FFD700" : "var(--text-muted)" }} />
+            <span style={{ fontSize: "10px", fontWeight: 700, color: showEquilibrium ? "#FFD700" : "var(--text-muted)" }}>SMC P/D</span>
+            <button
+              onClick={toggleEquilibrium}
+              style={{ background: "transparent", border: "none", color: showEquilibrium ? "#FFD700" : "var(--text-muted)", cursor: "pointer", padding: 0, display: "flex", alignItems: "center" }}
+              title={showEquilibrium ? "Hide Equilibrium & P/D Zones" : "Show Equilibrium & P/D Zones"}
+            >
+              {showEquilibrium ? <Eye size={11} /> : <EyeOff size={11} />}
+            </button>
+          </div>
+
+          <span style={{ color: "rgba(255, 255, 255, 0.2)" }}>•</span>
+
+          {/* ICT Sessions Quick Eye Badge */}
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <span style={{ width: "6px", height: "6px", borderRadius: "2px", background: showICTSessions ? "#9333EA" : "var(--text-muted)" }} />
+            <span style={{ fontSize: "10px", fontWeight: 700, color: showICTSessions ? "#9333EA" : "var(--text-muted)" }}>ICT Sessions</span>
+            <button
+              onClick={toggleICTSessions}
+              style={{ background: "transparent", border: "none", color: showICTSessions ? "#9333EA" : "var(--text-muted)", cursor: "pointer", padding: 0, display: "flex", alignItems: "center" }}
+              title={showICTSessions ? "Hide ICT Kill Zones" : "Show ICT Kill Zones"}
+            >
+              {showICTSessions ? <Eye size={11} /> : <EyeOff size={11} />}
             </button>
           </div>
         </div>
