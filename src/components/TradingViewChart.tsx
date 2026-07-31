@@ -13,13 +13,31 @@ import {
   detectMarketStructure,
   detectLiquidityPools,
   detectPremiumDiscount,
+  detectSupplyDemandZones,
+  detectTrendlineLiquidity,
+  detectCandlestickPatterns,
   FVGPattern,
   OrderBlockPattern,
   MarketStructureBreak,
   LiquidityPoolPattern,
   PremiumDiscountRange,
+  SupplyDemandZone,
+  TrendlineLiquidity,
+  CandlestickPattern,
+  CandlestickPatternType,
 } from "../utils/smcEngine";
-import { detectICTSessions, ICTSession } from "../utils/ictEngine";
+import {
+  detectICTSessions,
+  detectSilverBulletWindows,
+  detectICTOTEZone,
+  detectJudasSwings,
+  detectAMDCycles,
+  ICTSession,
+  ICTSilverBulletWindow,
+  ICTOTEZone,
+  ICTJudasSwing,
+  ICTAMDCycle,
+} from "../utils/ictEngine";
 
 export interface CandleTheme {
   id: string;
@@ -346,9 +364,149 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     drawSMCBoxes();
   }, [showICTSessions]);
 
+  // ICT Silver Bullet Windows (1-Hour High-Probability Windows) State
+  const [showSilverBullet, setShowSilverBullet] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("chart_show_silver_bullet") !== "false";
+    } catch {}
+    return true;
+  });
+
+  const toggleSilverBullet = () => {
+    setShowSilverBullet((prev) => {
+      const next = !prev;
+      try { localStorage.setItem("chart_show_silver_bullet", String(next)); } catch {}
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    drawSMCBoxes();
+  }, [showSilverBullet]);
+
+  // ICT Optimal Trade Entry (OTE 0.618 - 0.705 ⭐ - 0.790) State
+  const [showOTE, setShowOTE] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("chart_show_ote") !== "false";
+    } catch {}
+    return true;
+  });
+
+  const toggleOTE = () => {
+    setShowOTE((prev) => {
+      const next = !prev;
+      try { localStorage.setItem("chart_show_ote", String(next)); } catch {}
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    drawSMCBoxes();
+  }, [showOTE]);
+
+  // ICT Judas Swing Alerts (Session Open False Expansion & Fakeout Traps) State
+  const [showJudas, setShowJudas] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("chart_show_judas") !== "false";
+    } catch {}
+    return true;
+  });
+
+  const toggleJudas = () => {
+    setShowJudas((prev) => {
+      const next = !prev;
+      try { localStorage.setItem("chart_show_judas", String(next)); } catch {}
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    drawSMCBoxes();
+  }, [showJudas]);
+
+  // ICT AMD Power of 3 (Accumulation → Manipulation → Distribution) State
+  const [showAMD, setShowAMD] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("chart_show_amd") !== "false";
+    } catch {}
+    return true;
+  });
+
+  const toggleAMD = () => {
+    setShowAMD((prev) => {
+      const next = !prev;
+      try { localStorage.setItem("chart_show_amd", String(next)); } catch {}
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    drawSMCBoxes();
+  }, [showAMD]);
+
+  // Phase 3 — Supply & Demand Zones (Fresh / Tested origin boxes)
+  const [showSD, setShowSD] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("chart_show_sd") !== "false";
+    } catch {}
+    return true;
+  });
+
+  const toggleSD = () => {
+    setShowSD((prev) => {
+      const next = !prev;
+      try { localStorage.setItem("chart_show_sd", String(next)); } catch {}
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    drawSMCBoxes();
+  }, [showSD]);
+
+  // Phase 3 — Trendline Liquidity (Diagonal Support & Resistance with touch count + breakout)
+  const [showTL, setShowTL] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("chart_show_tl") !== "false";
+    } catch {}
+    return true;
+  });
+
+  const toggleTL = () => {
+    setShowTL((prev) => {
+      const next = !prev;
+      try { localStorage.setItem("chart_show_tl", String(next)); } catch {}
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    drawSMCBoxes();
+  }, [showTL]);
+
+  // Phase 3 — Candlestick Reversal Patterns (Pinbar, Engulfing, Inside Bar)
+  const [showCP, setShowCP] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("chart_show_cp") !== "false";
+    } catch {}
+    return true;
+  });
+
+  const toggleCP = () => {
+    setShowCP((prev) => {
+      const next = !prev;
+      try { localStorage.setItem("chart_show_cp", String(next)); } catch {}
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    drawSMCBoxes();
+  }, [showCP]);
+
   const smcCanvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Render 2D Shaded Rectangle Boxes for FVGs & OBs + Market Structure Lines (BOS/CHoCH) + Liquidity Pools (BSL/SSL) + Equilibrium (P/D) + ICT Sessions
+  // Render: FVG + OB + Structure + Liquidity + P/D + Sessions + Silver Bullet + OTE + Judas + AMD + S&D + Trendlines + Candlestick Patterns
   const drawSMCBoxes = () => {
     const canvas = smcCanvasRef.current;
     if (!canvas || !chartRef.current || !seriesRef.current) return;
@@ -657,6 +815,379 @@ export const TradingViewChart: React.FC<ChartProps> = ({
           ctx.fillText(s.name, centerX, 12);
           ctx.textAlign = "left";
         }
+      });
+    }
+
+    // 7. Draw ICT Silver Bullet Windows (London SB, NY AM SB, NY PM SB)
+    if (showSilverBullet && allCandlesRef.current.length >= 10) {
+      const sbWindows = detectSilverBulletWindows(allCandlesRef.current).slice(-6);
+
+      sbWindows.forEach((sb) => {
+        const xStart = timeScale.timeToCoordinate(sb.startTime);
+        const xEnd = timeScale.timeToCoordinate(sb.endTime);
+
+        if (xStart !== null) {
+          const startX = Math.max(0, xStart);
+          const endX = xEnd !== null ? Math.min(maxVisibleX, xEnd) : maxVisibleX;
+          const bandWidth = endX - startX;
+
+          if (bandWidth <= 4 || startX >= maxVisibleX) return;
+
+          ctx.fillStyle = "rgba(255, 215, 0, 0.12)";
+          ctx.fillRect(startX, 0, bandWidth, height);
+
+          ctx.strokeStyle = "rgba(255, 215, 0, 0.8)";
+          ctx.lineWidth = 1.2;
+          ctx.setLineDash([3, 3]);
+
+          ctx.beginPath();
+          ctx.moveTo(startX, 0);
+          ctx.lineTo(startX, height);
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.moveTo(endX, 0);
+          ctx.lineTo(endX, height);
+          ctx.stroke();
+
+          ctx.setLineDash([]);
+
+          const centerX = startX + bandWidth / 2;
+          ctx.fillStyle = "rgba(255, 215, 0, 0.25)";
+          ctx.fillRect(centerX - 42, 18, 84, 14);
+
+          ctx.strokeStyle = "#FFD700";
+          ctx.lineWidth = 1;
+          ctx.strokeRect(centerX - 42, 18, 84, 14);
+
+          ctx.fillStyle = "#FFFFFF";
+          ctx.font = "bold 8px monospace";
+          ctx.textAlign = "center";
+          ctx.fillText("SILVER BULLET 🎯", centerX, 28);
+          ctx.textAlign = "left";
+        }
+      });
+    }
+
+    // 8. Draw ICT Optimal Trade Entry (OTE Zone: 0.618 - 0.705 ⭐ - 0.790 Fib Levels)
+    if (showOTE && allCandlesRef.current.length >= 20) {
+      const ote = detectICTOTEZone(allCandlesRef.current);
+      if (ote) {
+        const y618 = series.priceToCoordinate(ote.fib618);
+        const y705 = series.priceToCoordinate(ote.fib705);
+        const y790 = series.priceToCoordinate(ote.fib790);
+        const xStart = timeScale.timeToCoordinate(ote.startTime);
+
+        if (y618 !== null && y705 !== null && y790 !== null) {
+          const startX = xStart !== null ? Math.max(0, xStart) : 0;
+          const boxWidth = Math.max(30, maxVisibleX - startX);
+
+          if (startX < maxVisibleX) {
+            const topY = Math.min(y618, y790);
+            const botY = Math.max(y618, y790);
+            const boxHeight = botY - topY;
+
+            ctx.fillStyle = "rgba(0, 229, 255, 0.12)";
+            ctx.fillRect(startX, topY, boxWidth, boxHeight);
+
+            ctx.strokeStyle = "rgba(0, 229, 255, 0.6)";
+            ctx.lineWidth = 1;
+            ctx.strokeRect(startX, topY, boxWidth, boxHeight);
+
+            ctx.strokeStyle = "#FFD700";
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(startX, y705);
+            ctx.lineTo(maxVisibleX, y705);
+            ctx.stroke();
+
+            const centerX = startX + boxWidth / 2;
+            ctx.fillStyle = "#FFD700";
+            ctx.font = "bold 9px monospace";
+            ctx.textAlign = "center";
+            ctx.fillText("0.705 SWEET SPOT ⭐", centerX, y705 - 4);
+
+            ctx.fillStyle = "#00E5FF";
+            ctx.font = "bold 8px monospace";
+            ctx.textAlign = "right";
+            ctx.fillText("0.618 OTE", maxVisibleX - 10, y618 - 3);
+
+            ctx.fillStyle = "#EC4899";
+            ctx.fillText("0.790 OTE", maxVisibleX - 10, y790 + 10);
+            ctx.textAlign = "left";
+          }
+        }
+      }
+    }
+
+    // 9. Draw ICT Judas Swing Alert Badges (Session Open False Expansion / Fakeout Traps)
+    if (showJudas && allCandlesRef.current.length >= 15) {
+      const judasItems = detectJudasSwings(allCandlesRef.current).slice(-6);
+
+      judasItems.forEach((j) => {
+        const yLine = series.priceToCoordinate(j.level);
+        const xCandle = timeScale.timeToCoordinate(j.candleTime);
+
+        if (yLine !== null && xCandle !== null && xCandle < maxVisibleX) {
+          const isBearJudas = j.type === "BEARISH_JUDAS";
+          const tagBg = isBearJudas ? "rgba(255, 73, 92, 0.25)" : "rgba(0, 245, 160, 0.25)";
+          const strokeColor = isBearJudas ? "#FF495C" : "#00F5A0";
+          const tagY = isBearJudas ? yLine - 22 : yLine + 6;
+
+          ctx.fillStyle = tagBg;
+          ctx.fillRect(xCandle - 45, tagY, 90, 15);
+
+          ctx.strokeStyle = strokeColor;
+          ctx.lineWidth = 1;
+          ctx.strokeRect(xCandle - 45, tagY, 90, 15);
+
+          ctx.fillStyle = "#FFFFFF";
+          ctx.font = "bold 8px monospace";
+          ctx.textAlign = "center";
+          ctx.fillText(
+            isBearJudas ? "JUDAS SWEEPT ⚡ (SELL)" : "JUDAS SWEEPT ⚡ (BUY)",
+            xCandle,
+            tagY + 10
+          );
+          ctx.textAlign = "left";
+        }
+      });
+    }
+
+    // 10. Draw ICT AMD Power of 3 (Accumulation → Manipulation → Distribution) Cycle Labels
+    if (showAMD && allCandlesRef.current.length >= 20) {
+      const amdCycles = detectAMDCycles(allCandlesRef.current).slice(-3);
+
+      amdCycles.forEach((cycle) => {
+        const isBull = cycle.trend === "BULLISH";
+        const accentColor = isBull ? "#00F5A0" : "#FF495C";
+
+        const xAccumStart = timeScale.timeToCoordinate(cycle.accumStartTime);
+        const xAccumEnd = timeScale.timeToCoordinate(cycle.accumEndTime);
+        const xManipStart = timeScale.timeToCoordinate(cycle.manipStartTime);
+        const xManipEnd = timeScale.timeToCoordinate(cycle.manipEndTime);
+        const xDistribStart = timeScale.timeToCoordinate(cycle.distribStartTime);
+        const xDistribEnd = timeScale.timeToCoordinate(cycle.distribEndTime);
+
+        const yAccumTop = series.priceToCoordinate(cycle.accumHigh);
+        const yAccumBot = series.priceToCoordinate(cycle.accumLow);
+        const yManipLevel = series.priceToCoordinate(cycle.manipLevel);
+        const yDistribLevel = series.priceToCoordinate(cycle.distribLevel);
+
+        // A — Accumulation box (neutral orange tint)
+        if (xAccumStart !== null && xAccumEnd !== null && yAccumTop !== null && yAccumBot !== null) {
+          const ax = Math.max(0, xAccumStart);
+          const aw = Math.min(maxVisibleX, xAccumEnd) - ax;
+          if (aw > 4 && ax < maxVisibleX) {
+            ctx.fillStyle = "rgba(255, 170, 0, 0.10)";
+            ctx.fillRect(ax, yAccumTop, aw, yAccumBot - yAccumTop);
+            ctx.strokeStyle = "rgba(255, 170, 0, 0.6)";
+            ctx.lineWidth = 1;
+            ctx.strokeRect(ax, yAccumTop, aw, yAccumBot - yAccumTop);
+            ctx.fillStyle = "#FFAA00";
+            ctx.font = "bold 8px monospace";
+            ctx.textAlign = "center";
+            ctx.fillText("A (ACCUM)", ax + aw / 2, yAccumTop + 12);
+            ctx.textAlign = "left";
+          }
+        }
+
+        // M — Manipulation wick marker
+        if (xManipStart !== null && xManipEnd !== null && yManipLevel !== null) {
+          const mx = Math.max(0, xManipStart);
+          const mw = Math.min(maxVisibleX, xManipEnd) - mx;
+          if (mw > 4 && mx < maxVisibleX) {
+            ctx.strokeStyle = isBull ? "rgba(255, 73, 92, 0.7)" : "rgba(0, 245, 160, 0.7)";
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([4, 3]);
+            ctx.beginPath();
+            ctx.moveTo(mx, yManipLevel);
+            ctx.lineTo(Math.min(maxVisibleX, mx + mw), yManipLevel);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.fillStyle = isBull ? "#FF495C" : "#00F5A0";
+            ctx.font = "bold 8px monospace";
+            ctx.textAlign = "center";
+            ctx.fillText(isBull ? "M (FALSE DIP)" : "M (FALSE PUMP)", mx + mw / 2, yManipLevel + (isBull ? 12 : -4));
+            ctx.textAlign = "left";
+          }
+        }
+
+        // D — Distribution target arrow
+        if (xDistribStart !== null && xDistribEnd !== null && yDistribLevel !== null) {
+          const dx = Math.max(0, xDistribStart);
+          const dw = Math.min(maxVisibleX, xDistribEnd) - dx;
+          if (dw > 4 && dx < maxVisibleX) {
+            ctx.fillStyle = `${accentColor}22`;
+            ctx.fillRect(dx, isBull ? yDistribLevel : yDistribLevel, dw, 20);
+            ctx.strokeStyle = accentColor;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(dx, yDistribLevel);
+            ctx.lineTo(Math.min(maxVisibleX, dx + dw), yDistribLevel);
+            ctx.stroke();
+            ctx.fillStyle = accentColor;
+            ctx.font = "bold 9px monospace";
+            ctx.textAlign = "center";
+            ctx.fillText(isBull ? "D (DIST) ▲" : "D (DIST) ▼", dx + dw / 2, yDistribLevel - 4);
+            ctx.textAlign = "left";
+          }
+        }
+      });
+    }
+
+    // 11. Draw Supply & Demand Zones (Fresh = vivid, Tested = dimmed border)
+    if (showSD && allCandlesRef.current.length >= 10) {
+      const sdZones = detectSupplyDemandZones(allCandlesRef.current).slice(-6);
+
+      sdZones.forEach((zone) => {
+        const yTop = series.priceToCoordinate(zone.top);
+        const yBot = series.priceToCoordinate(zone.bottom);
+        const xStart = timeScale.timeToCoordinate(zone.originTime);
+        const xEnd = timeScale.timeToCoordinate(zone.endTime);
+
+        if (yTop === null || yBot === null) return;
+
+        const isDemand = zone.type === "DEMAND";
+        const isFresh = zone.strength === "FRESH";
+
+        const startX = xStart !== null ? Math.max(0, xStart) : 0;
+        const endX = xEnd !== null ? Math.min(maxVisibleX, xEnd) : maxVisibleX;
+        const boxW = endX - startX;
+
+        if (boxW <= 4 || startX >= maxVisibleX) return;
+
+        // Fresh = vivid fill, Tested = semi-transparent with dashed border
+        const fillColor = isDemand
+          ? (isFresh ? "rgba(0, 245, 160, 0.18)" : "rgba(0, 245, 160, 0.08)")
+          : (isFresh ? "rgba(255, 73, 92, 0.18)" : "rgba(255, 73, 92, 0.08)");
+        const strokeColor = isDemand
+          ? (isFresh ? "#00F5A0" : "rgba(0, 245, 160, 0.45)")
+          : (isFresh ? "#FF495C" : "rgba(255, 73, 92, 0.45)");
+
+        ctx.fillStyle = fillColor;
+        ctx.fillRect(startX, yTop, boxW, yBot - yTop);
+
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = isFresh ? 1.5 : 1;
+        if (!isFresh) ctx.setLineDash([4, 3]);
+        ctx.strokeRect(startX, yTop, boxW, yBot - yTop);
+        ctx.setLineDash([]);
+
+        // Label: zone type + strength badge
+        const label = isDemand
+          ? (isFresh ? "DEMAND 🟢 FRESH" : "DEMAND 🔵 TESTED")
+          : (isFresh ? "SUPPLY 🔴 FRESH" : "SUPPLY 🟡 TESTED");
+
+        ctx.fillStyle = isDemand ? (isFresh ? "#00F5A0" : "#00E5FF") : (isFresh ? "#FF495C" : "#FFD700");
+        ctx.font = "bold 9px monospace";
+        ctx.textAlign = "left";
+        ctx.fillText(label, startX + 5, yTop + 12);
+      });
+    }
+
+    // 12. Draw Trendline Liquidity (Diagonal Support & Resistance with touch count + breakout alerts)
+    if (showTL && allCandlesRef.current.length >= 20) {
+      const trendlines = detectTrendlineLiquidity(allCandlesRef.current);
+
+      trendlines.forEach((tl) => {
+        const isRes = tl.type === "RESISTANCE";
+        const isActive = tl.status === "ACTIVE";
+        const isBroken = tl.status === "BROKEN";
+        const isSwept = tl.status === "SWEPT";
+
+        const x1 = timeScale.timeToCoordinate(tl.p1Time);
+        const x2 = timeScale.timeToCoordinate(tl.p2Time);
+        const y1 = series.priceToCoordinate(tl.p1Price);
+        const y2 = series.priceToCoordinate(tl.p2Price);
+
+        if (x1 === null || x2 === null || y1 === null || y2 === null) return;
+        if (x1 >= maxVisibleX && x2 >= maxVisibleX) return;
+
+        // Extend line to the right edge of the visible chart
+        const slope = x2 !== x1 ? (y2 - y1) / (x2 - x1) : 0;
+        const xEnd = Math.min(maxVisibleX, x2 + (maxVisibleX - x2));
+        const yEnd = y2 + slope * (xEnd - x2);
+
+        const activeColor = isRes ? "#FF495C" : "#00F5A0";
+        const strokeColor = isBroken ? "rgba(255,255,255,0.25)" : isSwept ? "#FFD700" : activeColor;
+
+        ctx.beginPath();
+        ctx.moveTo(Math.max(0, x1), y1);
+        ctx.lineTo(Math.min(maxVisibleX, xEnd), yEnd);
+
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = isActive ? (tl.touchCount >= 4 ? 2.0 : 1.5) : 1;
+        ctx.setLineDash(isBroken ? [4, 4] : []);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Touch count badge at the right end of the line
+        const labelX = Math.min(maxVisibleX - 55, xEnd - 4);
+        const labelY = yEnd + (isRes ? -6 : 14);
+
+        const statusIcon = isBroken ? " 💥" : isSwept ? " ⚡" : "";
+        const label = `${isRes ? "RES" : "SUP"} ×${tl.touchCount}${statusIcon}`;
+
+        ctx.fillStyle = strokeColor;
+        ctx.font = `bold ${tl.touchCount >= 4 ? 9 : 8}px monospace`;
+        ctx.textAlign = "right";
+        ctx.fillText(label, Math.min(maxVisibleX - 6, xEnd), labelY);
+        ctx.textAlign = "left";
+      });
+    }
+
+    // 13. Draw Candlestick Reversal Patterns (Pinbar / Engulfing / Inside Bar)
+    if (showCP && allCandlesRef.current.length >= 5) {
+      const cpItems = detectCandlestickPatterns(allCandlesRef.current);
+
+      cpItems.forEach((cp) => {
+        const xC = timeScale.timeToCoordinate(cp.candleTime);
+        const yHigh = series.priceToCoordinate(cp.high);
+        const yLow = series.priceToCoordinate(cp.low);
+
+        if (xC === null || yHigh === null || yLow === null || xC > maxVisibleX) return;
+
+        const isBull = cp.type.startsWith("BULLISH") || cp.type === "INSIDE_BAR_BULL";
+        const isStrong = cp.strength === "STRONG";
+        const accentColor = isBull ? "#00F5A0" : "#FF495C";
+
+        // Arrow triangle pointing up (bull) or down (bear)
+        const arrowSize = isStrong ? 7 : 5;
+        const arrowY = isBull ? yLow + 14 : yHigh - 14;
+        const tipY = isBull ? arrowY - arrowSize : arrowY + arrowSize;
+
+        ctx.fillStyle = accentColor;
+        ctx.beginPath();
+        if (isBull) {
+          ctx.moveTo(xC, arrowY - arrowSize); // tip pointing up
+          ctx.lineTo(xC - arrowSize, arrowY);
+          ctx.lineTo(xC + arrowSize, arrowY);
+        } else {
+          ctx.moveTo(xC, arrowY + arrowSize); // tip pointing down
+          ctx.lineTo(xC - arrowSize, arrowY);
+          ctx.lineTo(xC + arrowSize, arrowY);
+        }
+        ctx.closePath();
+        ctx.fill();
+
+        // Pattern label
+        const patternLabels: Record<CandlestickPatternType, string> = {
+          BULLISH_PINBAR: "🔨 PIN",
+          BEARISH_PINBAR: "⭐ PIN",
+          BULLISH_ENGULF: "↑ ENGULF",
+          BEARISH_ENGULF: "↓ ENGULF",
+          INSIDE_BAR_BULL: "◆ IB↑",
+          INSIDE_BAR_BEAR: "◆ IB↓",
+        };
+        const labelText = patternLabels[cp.type] + (isStrong ? "!" : "");
+        const labelY2 = isBull ? arrowY + 12 : arrowY - 6;
+
+        ctx.fillStyle = accentColor;
+        ctx.font = `${isStrong ? "bold " : ""}8px monospace`;
+        ctx.textAlign = "center";
+        ctx.fillText(labelText, xC, labelY2);
+        ctx.textAlign = "left";
       });
     }
   };
@@ -1506,6 +2037,185 @@ export const TradingViewChart: React.FC<ChartProps> = ({
                   </button>
                 </div>
 
+                {/* 6. ICT Silver Bullet (1-Hr Windows) */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "4px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span style={{ width: "8px", height: "8px", borderRadius: "2px", background: "#FFD700" }} />
+                    <span style={{ fontSize: "11px", fontWeight: 600, color: showSilverBullet ? "#FFFFFF" : "var(--text-muted)" }}>
+                      Silver Bullet (1-Hr Windows 🎯)
+                    </span>
+                  </div>
+                  <button
+                    onClick={toggleSilverBullet}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: showSilverBullet ? "#FFD700" : "var(--text-muted)",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      padding: "2px",
+                    }}
+                    title={showSilverBullet ? "Hide Silver Bullet Windows" : "Show Silver Bullet Windows"}
+                  >
+                    {showSilverBullet ? <Eye size={13} /> : <EyeOff size={13} />}
+                  </button>
+                </div>
+
+                {/* 7. ICT Optimal Trade Entry (OTE Zone 0.705 ⭐) */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "4px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span style={{ width: "8px", height: "2px", background: "#00E5FF" }} />
+                    <span style={{ fontSize: "11px", fontWeight: 600, color: showOTE ? "#FFFFFF" : "var(--text-muted)" }}>
+                      Optimal Trade Entry (OTE ⭐)
+                    </span>
+                  </div>
+                  <button
+                    onClick={toggleOTE}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: showOTE ? "var(--accent-cyan)" : "var(--text-muted)",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      padding: "2px",
+                    }}
+                    title={showOTE ? "Hide Optimal Trade Entry Zone" : "Show Optimal Trade Entry Zone"}
+                  >
+                    {showOTE ? <Eye size={13} /> : <EyeOff size={13} />}
+                  </button>
+                </div>
+
+                {/* 8. ICT Judas Swing Alerts (Fakeout Traps ⚡) */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "4px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span style={{ width: "8px", height: "8px", borderRadius: "2px", background: "#FF495C" }} />
+                    <span style={{ fontSize: "11px", fontWeight: 600, color: showJudas ? "#FFFFFF" : "var(--text-muted)" }}>
+                      Judas Swing Alerts ⚡
+                    </span>
+                  </div>
+                  <button
+                    onClick={toggleJudas}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: showJudas ? "#FF495C" : "var(--text-muted)",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      padding: "2px",
+                    }}
+                    title={showJudas ? "Hide Judas Swing Alerts" : "Show Judas Swing Alerts"}
+                  >
+                    {showJudas ? <Eye size={13} /> : <EyeOff size={13} />}
+                  </button>
+                </div>
+
+                {/* 9. ICT AMD Power of 3 (Accumulation → Manipulation → Distribution) */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "4px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span style={{ width: "8px", height: "8px", borderRadius: "2px", background: "#FFAA00" }} />
+                    <span style={{ fontSize: "11px", fontWeight: 600, color: showAMD ? "#FFFFFF" : "var(--text-muted)" }}>
+                      AMD Power of 3 (A→M→D)
+                    </span>
+                  </div>
+                  <button
+                    onClick={toggleAMD}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: showAMD ? "#FFAA00" : "var(--text-muted)",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      padding: "2px",
+                    }}
+                    title={showAMD ? "Hide AMD Power of 3 Cycles" : "Show AMD Power of 3 Cycles"}
+                  >
+                    {showAMD ? <Eye size={13} /> : <EyeOff size={13} />}
+                  </button>
+                </div>
+
+                <div style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.5px", borderBottom: "1px solid rgba(255, 255, 255, 0.08)", paddingBottom: "4px", marginTop: "8px" }}>
+                  PRICE ACTION
+                </div>
+
+                {/* 10. Supply & Demand Zones (Fresh / Tested) */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "4px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span style={{ width: "8px", height: "8px", borderRadius: "2px", background: "#00F5A0" }} />
+                    <span style={{ fontSize: "11px", fontWeight: 600, color: showSD ? "#FFFFFF" : "var(--text-muted)" }}>
+                      Supply & Demand Zones
+                    </span>
+                  </div>
+                  <button
+                    onClick={toggleSD}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: showSD ? "#00F5A0" : "var(--text-muted)",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      padding: "2px",
+                    }}
+                    title={showSD ? "Hide Supply & Demand Zones" : "Show Supply & Demand Zones"}
+                  >
+                    {showSD ? <Eye size={13} /> : <EyeOff size={13} />}
+                  </button>
+                </div>
+
+                {/* 11. Trendline Liquidity (Diagonal S/R lines with touch count) */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "4px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span style={{ width: "12px", height: "2px", background: "#00F5A0", borderRadius: "1px" }} />
+                    <span style={{ fontSize: "11px", fontWeight: 600, color: showTL ? "#FFFFFF" : "var(--text-muted)" }}>
+                      Trendline Liquidity (S/R)
+                    </span>
+                  </div>
+                  <button
+                    onClick={toggleTL}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: showTL ? "#00F5A0" : "var(--text-muted)",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      padding: "2px",
+                    }}
+                    title={showTL ? "Hide Trendline Liquidity" : "Show Trendline Liquidity"}
+                  >
+                    {showTL ? <Eye size={13} /> : <EyeOff size={13} />}
+                  </button>
+                </div>
+
+                {/* 12. Candlestick Reversal Patterns (Pinbar / Engulfing / Inside Bar) */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "4px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span style={{ fontSize: "11px" }}>🔨</span>
+                    <span style={{ fontSize: "11px", fontWeight: 600, color: showCP ? "#FFFFFF" : "var(--text-muted)" }}>
+                      Candlestick Patterns
+                    </span>
+                  </div>
+                  <button
+                    onClick={toggleCP}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: showCP ? "#FFD700" : "var(--text-muted)",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      padding: "2px",
+                    }}
+                    title={showCP ? "Hide Candlestick Patterns" : "Show Candlestick Patterns"}
+                  >
+                    {showCP ? <Eye size={13} /> : <EyeOff size={13} />}
+                  </button>
+                </div>
+
                 <div style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.5px", borderBottom: "1px solid rgba(255, 255, 255, 0.08)", paddingBottom: "4px", marginTop: "8px" }}>
                   CANDLE BODY STYLE
                 </div>
@@ -1654,8 +2364,117 @@ export const TradingViewChart: React.FC<ChartProps> = ({
               {showICTSessions ? <Eye size={11} /> : <EyeOff size={11} />}
             </button>
           </div>
+
+          <span style={{ color: "rgba(255, 255, 255, 0.2)" }}>•</span>
+
+          {/* ICT SB Quick Eye Badge */}
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <span style={{ width: "6px", height: "6px", borderRadius: "2px", background: showSilverBullet ? "#FFD700" : "var(--text-muted)" }} />
+            <span style={{ fontSize: "10px", fontWeight: 700, color: showSilverBullet ? "#FFD700" : "var(--text-muted)" }}>ICT SB 🎯</span>
+            <button
+              onClick={toggleSilverBullet}
+              style={{ background: "transparent", border: "none", color: showSilverBullet ? "#FFD700" : "var(--text-muted)", cursor: "pointer", padding: 0, display: "flex", alignItems: "center" }}
+              title={showSilverBullet ? "Hide Silver Bullet Windows" : "Show Silver Bullet Windows"}
+            >
+              {showSilverBullet ? <Eye size={11} /> : <EyeOff size={11} />}
+            </button>
+          </div>
+
+          <span style={{ color: "rgba(255, 255, 255, 0.2)" }}>•</span>
+
+          {/* ICT OTE Quick Eye Badge */}
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <span style={{ width: "8px", height: "2px", background: showOTE ? "var(--accent-cyan)" : "var(--text-muted)" }} />
+            <span style={{ fontSize: "10px", fontWeight: 700, color: showOTE ? "var(--accent-cyan)" : "var(--text-muted)" }}>ICT OTE ⭐</span>
+            <button
+              onClick={toggleOTE}
+              style={{ background: "transparent", border: "none", color: showOTE ? "var(--accent-cyan)" : "var(--text-muted)", cursor: "pointer", padding: 0, display: "flex", alignItems: "center" }}
+              title={showOTE ? "Hide Optimal Trade Entry Zone" : "Show Optimal Trade Entry Zone"}
+            >
+              {showOTE ? <Eye size={11} /> : <EyeOff size={11} />}
+            </button>
+          </div>
+
+          <span style={{ color: "rgba(255, 255, 255, 0.2)" }}>•</span>
+
+          {/* ICT Judas Quick Eye Badge */}
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <span style={{ width: "6px", height: "6px", borderRadius: "2px", background: showJudas ? "#FF495C" : "var(--text-muted)" }} />
+            <span style={{ fontSize: "10px", fontWeight: 700, color: showJudas ? "#FF495C" : "var(--text-muted)" }}>ICT Judas ⚡</span>
+            <button
+              onClick={toggleJudas}
+              style={{ background: "transparent", border: "none", color: showJudas ? "#FF495C" : "var(--text-muted)", cursor: "pointer", padding: 0, display: "flex", alignItems: "center" }}
+              title={showJudas ? "Hide Judas Swing Alerts" : "Show Judas Swing Alerts"}
+            >
+              {showJudas ? <Eye size={11} /> : <EyeOff size={11} />}
+            </button>
+          </div>
+
+          <span style={{ color: "rgba(255, 255, 255, 0.2)" }}>•</span>
+
+          {/* ICT AMD Power of 3 Quick Eye Badge */}
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <span style={{ width: "6px", height: "6px", borderRadius: "2px", background: showAMD ? "#FFAA00" : "var(--text-muted)" }} />
+            <span style={{ fontSize: "10px", fontWeight: 700, color: showAMD ? "#FFAA00" : "var(--text-muted)" }}>AMD (A→M→D)</span>
+            <button
+              onClick={toggleAMD}
+              style={{ background: "transparent", border: "none", color: showAMD ? "#FFAA00" : "var(--text-muted)", cursor: "pointer", padding: 0, display: "flex", alignItems: "center" }}
+              title={showAMD ? "Hide AMD Power of 3" : "Show AMD Power of 3"}
+            >
+              {showAMD ? <Eye size={11} /> : <EyeOff size={11} />}
+            </button>
+          </div>
+
+          <span style={{ color: "rgba(255, 255, 255, 0.2)" }}>•</span>
+
+          {/* S&D Zones Quick Eye Badge */}
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <span style={{ width: "6px", height: "6px", borderRadius: "2px", background: showSD ? "#00F5A0" : "var(--text-muted)" }} />
+            <span style={{ fontSize: "10px", fontWeight: 700, color: showSD ? "#00F5A0" : "var(--text-muted)" }}>S&D Zones</span>
+            <button
+              onClick={toggleSD}
+              style={{ background: "transparent", border: "none", color: showSD ? "#00F5A0" : "var(--text-muted)", cursor: "pointer", padding: 0, display: "flex", alignItems: "center" }}
+              title={showSD ? "Hide Supply & Demand Zones" : "Show Supply & Demand Zones"}
+            >
+              {showSD ? <Eye size={11} /> : <EyeOff size={11} />}
+            </button>
+          </div>
+
+          <span style={{ color: "rgba(255, 255, 255, 0.2)" }}>•</span>
+
+          {/* Trendline Liquidity Quick Eye Badge */}
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <span style={{ width: "10px", height: "2px", background: showTL ? "#00F5A0" : "var(--text-muted)", borderRadius: "1px" }} />
+            <span style={{ fontSize: "10px", fontWeight: 700, color: showTL ? "#00F5A0" : "var(--text-muted)" }}>TL Liq.</span>
+            <button
+              onClick={toggleTL}
+              style={{ background: "transparent", border: "none", color: showTL ? "#00F5A0" : "var(--text-muted)", cursor: "pointer", padding: 0, display: "flex", alignItems: "center" }}
+              title={showTL ? "Hide Trendline Liquidity" : "Show Trendline Liquidity"}
+            >
+              {showTL ? <Eye size={11} /> : <EyeOff size={11} />}
+            </button>
+          </div>
+
+          <span style={{ color: "rgba(255, 255, 255, 0.2)" }}>•</span>
+
+          {/* Candlestick Patterns Quick Eye Badge */}
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <span style={{ fontSize: "9px" }}>🔨</span>
+            <span style={{ fontSize: "10px", fontWeight: 700, color: showCP ? "#FFD700" : "var(--text-muted)" }}>Patterns</span>
+            <button
+              onClick={toggleCP}
+              style={{ background: "transparent", border: "none", color: showCP ? "#FFD700" : "var(--text-muted)", cursor: "pointer", padding: 0, display: "flex", alignItems: "center" }}
+              title={showCP ? "Hide Candlestick Patterns" : "Show Candlestick Patterns"}
+            >
+              {showCP ? <Eye size={11} /> : <EyeOff size={11} />}
+            </button>
+          </div>
         </div>
       </div>
+
+
+
+
 
       {/* Loading Overlay */}
       {isLoading && (
