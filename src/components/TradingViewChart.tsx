@@ -427,6 +427,29 @@ export const TradingViewChart: React.FC<ChartProps> = ({
                 color: "rgba(0, 245, 160, 0.35)",
               });
             }
+
+            // Reconcile closed candle with DhanHQ authoritative intraday endpoint 2.5s post-close
+            const closedBarTime = lastBarTime;
+            setTimeout(async () => {
+              try {
+                const res = await fetch(
+                  `/api/charts/intraday?symbol=${encodeURIComponent(symbol)}&interval=${interval}`
+                );
+                const json = await res.json();
+                if (json?.candles?.length) {
+                  const reconciled = json.candles.find((c: any) => Number(c.time) === closedBarTime);
+                  if (reconciled && seriesRef.current) {
+                    seriesRef.current.update({
+                      time: Number(reconciled.time),
+                      open: Number(reconciled.open),
+                      high: Number(reconciled.high),
+                      low: Number(reconciled.low),
+                      close: Number(reconciled.close),
+                    });
+                  }
+                }
+              } catch (e) {}
+            }, 2500);
           } catch (e) {}
         } else {
           // Update active forming candle smoothly while evaluating high/low strictly on rawTargetLtp

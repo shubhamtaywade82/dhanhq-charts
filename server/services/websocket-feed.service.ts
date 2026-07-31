@@ -71,7 +71,7 @@ export class WebSocketFeedService {
             })
           );
         }
-      }, 200);
+      }, 50);
 
       ws.on("close", () => {
         clearInterval(interval);

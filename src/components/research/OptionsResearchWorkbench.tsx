@@ -343,75 +343,75 @@ export const OptionsResearchWorkbench: React.FC = () => {
               LOAD SESSION
             </button>
           </div>
-        )}
+        </div>
+      ) : null}
 
-        {/* Tab content (only when snapshot loaded and not loading) */}
-        {!loading && snapshot && (
-          <>
-            {activeTab === "replay" && (
-              <MarketReplayView
-                snapshot={snapshot}
-                selectedStrikeTag={selectedStrikeTag}
-                onSelectStrikeTag={setSelectedStrikeTag}
-              />
-            )}
+      {/* Tab content (only when snapshot loaded and not loading) */}
+      {!loading && snapshot && (
+        <>
+          {activeTab === "replay" && (
+            <MarketReplayView
+              snapshot={snapshot}
+              selectedStrikeTag={selectedStrikeTag}
+              onSelectStrikeTag={setSelectedStrikeTag}
+            />
+          )}
 
-            {activeTab === "chain" && (
-              <ExpiredOptionsTable
-                candles={snapshot?.strikes?.[selectedStrikeTag]?.ce?.close ? snapshot.strikes[selectedStrikeTag].ce.close.map((close: number, idx: number) => ({
-                  time: snapshot.strikes[selectedStrikeTag].ce.timestamp[idx],
-                  open: snapshot.strikes[selectedStrikeTag].ce.open[idx],
-                  high: snapshot.strikes[selectedStrikeTag].ce.high[idx],
-                  low: snapshot.strikes[selectedStrikeTag].ce.low[idx],
-                  close,
-                  volume: snapshot.strikes[selectedStrikeTag].ce.volume[idx],
-                  oi: snapshot.strikes[selectedStrikeTag].ce.oi?.[idx] || 0,
-                  spot: snapshot.strikes[selectedStrikeTag].ce.spot?.[idx] || 0,
-                })) : []}
-                symbol={queryForm.symbol}
-                strike={selectedStrikeTag}
-                optionType="CALL"
-                spotInfo={{
-                  spot: snapshot?.metadata?.underlyingSpotPrice || 24850,
-                  step: snapshot?.metadata?.strikeStep || 50,
-                  atmStrike: snapshot?.metadata?.atmStrike || 24850,
-                  calculatedStrike: (snapshot?.metadata?.atmStrike || 24850),
-                  offset: 0,
-                  moneynessTag: "ATM",
-                  diffFromSpot: 0,
-                  diffPct: 0,
-                }}
-                allStrikesData={snapshot?.strikes}
-              />
-            )}
+          {activeTab === "chain" && (
+            <ExpiredOptionsTable
+              candles={snapshot?.strikes?.[selectedStrikeTag]?.ce?.close ? snapshot.strikes[selectedStrikeTag].ce.close.map((close: number, idx: number) => ({
+                time: snapshot.strikes[selectedStrikeTag].ce.timestamp[idx],
+                open: snapshot.strikes[selectedStrikeTag].ce.open[idx],
+                high: snapshot.strikes[selectedStrikeTag].ce.high[idx],
+                low: snapshot.strikes[selectedStrikeTag].ce.low[idx],
+                close,
+                volume: snapshot.strikes[selectedStrikeTag].ce.volume[idx],
+                oi: snapshot.strikes[selectedStrikeTag].ce.oi?.[idx] || 0,
+                spot: snapshot.strikes[selectedStrikeTag].ce.spot?.[idx] || 0,
+              })) : []}
+              symbol={queryForm.symbol}
+              strike={selectedStrikeTag}
+              optionType="CALL"
+              spotInfo={{
+                spot: snapshot?.metadata?.underlyingSpotPrice || 24850,
+                step: snapshot?.metadata?.strikeStep || 50,
+                atmStrike: snapshot?.metadata?.atmStrike || 24850,
+                calculatedStrike: (snapshot?.metadata?.atmStrike || 24850),
+                offset: 0,
+                moneynessTag: "ATM",
+                diffFromSpot: 0,
+                diffPct: 0,
+              }}
+              allStrikesData={snapshot?.strikes}
+            />
+          )}
 
-            {activeTab === "heatmap" && <TimeStrikeHeatmapView snapshot={snapshot} analyticsData={analyticsData} />}
-            {activeTab === "premium" && <PremiumAnalyticsView snapshot={snapshot} analyticsData={analyticsData} />}
-            {activeTab === "positioning" && <PositioningAnalyticsView snapshot={snapshot} analyticsData={analyticsData} />}
+          {activeTab === "heatmap" && <TimeStrikeHeatmapView snapshot={snapshot} analyticsData={analyticsData} />}
+          {activeTab === "premium" && <PremiumAnalyticsView snapshot={snapshot} analyticsData={analyticsData} />}
+          {activeTab === "positioning" && <PositioningAnalyticsView snapshot={snapshot} analyticsData={analyticsData} />}
 
-            {activeTab === "backtest" && (
-              <StrategyBacktestView
-                snapshot={snapshot}
-                backtestResult={backtestResult}
-                onRunBacktestWithConfig={(cfg) => handleRunBacktest(cfg)}
-              />
-            )}
+          {activeTab === "backtest" && (
+            <StrategyBacktestView
+              snapshot={snapshot}
+              backtestResult={backtestResult}
+              onRunBacktestWithConfig={(cfg) => handleRunBacktest(cfg)}
+            />
+          )}
 
-            {activeTab === "trades" && (
-              <TradeExplorerView
-                backtestResult={backtestResult}
-                onReplayTrade={(tr) => {
-                  setSelectedStrikeTag(tr.strikeOffset);
-                  setActiveTab("replay");
-                }}
-              />
-            )}
+          {activeTab === "trades" && (
+            <TradeExplorerView
+              backtestResult={backtestResult}
+              onReplayTrade={(tr) => {
+                setSelectedStrikeTag(tr.strikeOffset);
+                setActiveTab("replay");
+              }}
+            />
+          )}
 
-            {activeTab === "attribution" && <AttributionAnalyticsView backtestResult={backtestResult} />}
-            {activeTab === "session" && <SessionAnalyticsView snapshot={snapshot} analyticsData={analyticsData} />}
-          </>
-        )}
-      </div>
+          {activeTab === "attribution" && <AttributionAnalyticsView backtestResult={backtestResult} />}
+          {activeTab === "session" && <SessionAnalyticsView snapshot={snapshot} analyticsData={analyticsData} />}
+        </>
+      )}
     </div>
   );
 };
