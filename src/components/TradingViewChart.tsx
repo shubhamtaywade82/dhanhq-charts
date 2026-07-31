@@ -15,6 +15,7 @@ export interface CandleTheme {
   downColor: string;
   volUpColor: string;
   volDownColor: string;
+  priceLineColor: string;
 }
 
 export const CANDLE_THEMES: Record<string, CandleTheme> = {
@@ -25,6 +26,7 @@ export const CANDLE_THEMES: Record<string, CandleTheme> = {
     downColor: "#FF495C",
     volUpColor: "rgba(0, 245, 160, 0.35)",
     volDownColor: "rgba(255, 73, 92, 0.35)",
+    priceLineColor: "#00F5A0",
   },
   classic: {
     id: "classic",
@@ -33,6 +35,7 @@ export const CANDLE_THEMES: Record<string, CandleTheme> = {
     downColor: "#F23645",
     volUpColor: "rgba(8, 153, 129, 0.35)",
     volDownColor: "rgba(242, 54, 69, 0.35)",
+    priceLineColor: "#089981",
   },
   ice: {
     id: "ice",
@@ -41,6 +44,7 @@ export const CANDLE_THEMES: Record<string, CandleTheme> = {
     downColor: "#78909C",
     volUpColor: "rgba(0, 229, 255, 0.35)",
     volDownColor: "rgba(120, 144, 156, 0.35)",
+    priceLineColor: "#00E5FF",
   },
   gold: {
     id: "gold",
@@ -49,6 +53,7 @@ export const CANDLE_THEMES: Record<string, CandleTheme> = {
     downColor: "#A855F7",
     volUpColor: "rgba(255, 184, 0, 0.35)",
     volDownColor: "rgba(168, 85, 247, 0.35)",
+    priceLineColor: "#FFB800",
   },
   neon: {
     id: "neon",
@@ -57,6 +62,7 @@ export const CANDLE_THEMES: Record<string, CandleTheme> = {
     downColor: "#EC4899",
     volUpColor: "rgba(59, 130, 246, 0.35)",
     volDownColor: "rgba(236, 72, 153, 0.35)",
+    priceLineColor: "#3B82F6",
   },
   bw: {
     id: "bw",
@@ -65,6 +71,7 @@ export const CANDLE_THEMES: Record<string, CandleTheme> = {
     downColor: "#2A2E39",
     volUpColor: "rgba(255, 255, 255, 0.4)",
     volDownColor: "rgba(67, 70, 81, 0.5)",
+    priceLineColor: "#FFFFFF",
   },
 };
 
@@ -127,6 +134,8 @@ export const TradingViewChart: React.FC<ChartProps> = ({
         borderDownColor: theme.downColor,
         wickUpColor: theme.upColor,
         wickDownColor: theme.downColor,
+        priceLineVisible: true,
+        priceLineColor: theme.priceLineColor,
       });
     } else {
       seriesRef.current.applyOptions({
@@ -137,6 +146,8 @@ export const TradingViewChart: React.FC<ChartProps> = ({
         borderDownColor: theme.downColor,
         wickUpColor: theme.upColor,
         wickDownColor: theme.downColor,
+        priceLineVisible: true,
+        priceLineColor: theme.priceLineColor,
       });
     }
   };
@@ -335,6 +346,8 @@ export const TradingViewChart: React.FC<ChartProps> = ({
             borderDownColor: activeThemeRef.current.downColor,
             wickUpColor: activeThemeRef.current.upColor,
             wickDownColor: activeThemeRef.current.downColor,
+            priceLineVisible: true,
+            priceLineColor: activeThemeRef.current.priceLineColor,
           });
 
           seriesRef.current = candlestickSeries;
@@ -496,8 +509,43 @@ export const TradingViewChart: React.FC<ChartProps> = ({
       resizeObserver.observe(chartContainerRef.current);
     }
 
+    // Periodic 60s Background Reconciliation to ensure all historical candles remain perfectly in sync
+    const reconcileTimer = setInterval(async () => {
+      if (!isSubscribed || customCandles?.length) return;
+      try {
+        const res = await fetch(
+          `/api/charts/intraday?symbol=${encodeURIComponent(symbol)}&interval=${interval}`
+        );
+        const json = await res.json();
+        if (json?.candles?.length && seriesRef.current) {
+          const authoritativeCandles = json.candles.map((c: any) => ({
+            time: Number(c.time),
+            open: Number(c.open),
+            high: Number(c.high),
+            low: Number(c.low),
+            close: Number(c.close),
+            volume: Number(c.volume || 0),
+          }));
+
+          allCandlesRef.current = authoritativeCandles;
+
+          const formattedVolume = authoritativeCandles.map((c: any) => ({
+            time: c.time,
+            value: c.volume,
+            color: c.close >= c.open ? activeThemeRef.current.volUpColor : activeThemeRef.current.volDownColor,
+          }));
+
+          seriesRef.current.setData(authoritativeCandles);
+          if (volumeSeriesRef.current) {
+            volumeSeriesRef.current.setData(formattedVolume);
+          }
+        }
+      } catch (e) {}
+    }, 60000);
+
     return () => {
       isSubscribed = false;
+      clearInterval(reconcileTimer);
       resizeObserver.disconnect();
       if (chart) {
         chart.remove();
@@ -571,24 +619,34 @@ export const TradingViewChart: React.FC<ChartProps> = ({
               });
             }
 
-            // Reconcile closed candle with DhanHQ authoritative intraday endpoint 2.5s post-close
-            const closedBarTime = lastBarTime;
+            // Reconcile ALL previous candles with DhanHQ authoritative intraday endpoint 2.5s post-close
             setTimeout(async () => {
               try {
                 const res = await fetch(
                   `/api/charts/intraday?symbol=${encodeURIComponent(symbol)}&interval=${interval}`
                 );
                 const json = await res.json();
-                if (json?.candles?.length) {
-                  const reconciled = json.candles.find((c: any) => Number(c.time) === closedBarTime);
-                  if (reconciled && seriesRef.current) {
-                    seriesRef.current.update({
-                      time: Number(reconciled.time),
-                      open: Number(reconciled.open),
-                      high: Number(reconciled.high),
-                      low: Number(reconciled.low),
-                      close: Number(reconciled.close),
-                    });
+                if (json?.candles?.length && seriesRef.current) {
+                  const authoritativeCandles = json.candles.map((c: any) => ({
+                    time: Number(c.time),
+                    open: Number(c.open),
+                    high: Number(c.high),
+                    low: Number(c.low),
+                    close: Number(c.close),
+                    volume: Number(c.volume || 0),
+                  }));
+
+                  allCandlesRef.current = authoritativeCandles;
+
+                  const formattedVolume = authoritativeCandles.map((c: any) => ({
+                    time: c.time,
+                    value: c.volume,
+                    color: c.close >= c.open ? activeThemeRef.current.volUpColor : activeThemeRef.current.volDownColor,
+                  }));
+
+                  seriesRef.current.setData(authoritativeCandles);
+                  if (volumeSeriesRef.current) {
+                    volumeSeriesRef.current.setData(formattedVolume);
                   }
                 }
               } catch (e) {}
