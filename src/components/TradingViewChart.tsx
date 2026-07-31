@@ -8,6 +8,58 @@ import {
 } from "lightweight-charts";
 import { Clock, Eye, EyeOff, ChevronDown, ChevronUp, Sliders } from "lucide-react";
 
+export interface CandleTheme {
+  id: string;
+  name: string;
+  upColor: string;
+  downColor: string;
+  volUpColor: string;
+  volDownColor: string;
+}
+
+export const CANDLE_THEMES: Record<string, CandleTheme> = {
+  emerald: {
+    id: "emerald",
+    name: "Cyber Emerald",
+    upColor: "#00F5A0",
+    downColor: "#FF495C",
+    volUpColor: "rgba(0, 245, 160, 0.35)",
+    volDownColor: "rgba(255, 73, 92, 0.35)",
+  },
+  classic: {
+    id: "classic",
+    name: "Classic TV",
+    upColor: "#089981",
+    downColor: "#F23645",
+    volUpColor: "rgba(8, 153, 129, 0.35)",
+    volDownColor: "rgba(242, 54, 69, 0.35)",
+  },
+  ice: {
+    id: "ice",
+    name: "Electric Ice",
+    upColor: "#00E5FF",
+    downColor: "#78909C",
+    volUpColor: "rgba(0, 229, 255, 0.35)",
+    volDownColor: "rgba(120, 144, 156, 0.35)",
+  },
+  gold: {
+    id: "gold",
+    name: "Solar Gold",
+    upColor: "#FFB800",
+    downColor: "#A855F7",
+    volUpColor: "rgba(255, 184, 0, 0.35)",
+    volDownColor: "rgba(168, 85, 247, 0.35)",
+  },
+  neon: {
+    id: "neon",
+    name: "Midnight Neon",
+    upColor: "#3B82F6",
+    downColor: "#EC4899",
+    volUpColor: "rgba(59, 130, 246, 0.35)",
+    volDownColor: "rgba(236, 72, 153, 0.35)",
+  },
+};
+
 interface ChartProps {
   symbol: string;
   interval: string;
@@ -30,6 +82,19 @@ export const TradingViewChart: React.FC<ChartProps> = ({
   const [isLazyLoading, setIsLazyLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [countdown, setCountdown] = useState<string>("00:00");
+
+  // Candle Theme State (persisted to localStorage)
+  const [selectedThemeId, setSelectedThemeId] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem("chart_candle_theme");
+      if (saved && CANDLE_THEMES[saved]) return saved;
+    } catch {}
+    return "emerald";
+  });
+
+  const activeTheme = CANDLE_THEMES[selectedThemeId] || CANDLE_THEMES.emerald;
+  const activeThemeRef = useRef(activeTheme);
+  activeThemeRef.current = activeTheme;
 
   // Indicator Management State (SMA 20 & EMA 9) — persisted to localStorage
   const [showIndicatorsPanel, setShowIndicatorsPanel] = useState(false);
@@ -70,6 +135,33 @@ export const TradingViewChart: React.FC<ChartProps> = ({
       try { localStorage.setItem("chart_indicator_visibility", JSON.stringify(next)); } catch {}
       return next;
     });
+  };
+
+  // Switch & Persist Candle Theme dynamically (applies to candlesticks + volume series)
+  const handleThemeChange = (themeId: string) => {
+    const theme = CANDLE_THEMES[themeId];
+    if (!theme) return;
+    setSelectedThemeId(themeId);
+    activeThemeRef.current = theme;
+    try { localStorage.setItem("chart_candle_theme", themeId); } catch {}
+
+    if (seriesRef.current) {
+      seriesRef.current.applyOptions({
+        upColor: theme.upColor,
+        downColor: theme.downColor,
+        wickUpColor: theme.upColor,
+        wickDownColor: theme.downColor,
+      });
+    }
+
+    if (volumeSeriesRef.current && allCandlesRef.current.length > 0) {
+      const updatedVolume = allCandlesRef.current.map((c: any) => ({
+        time: c.time,
+        value: c.volume,
+        color: c.close >= c.open ? theme.volUpColor : theme.volDownColor,
+      }));
+      volumeSeriesRef.current.setData(updatedVolume);
+    }
   };
 
   // 1. Candle Countdown Timer (MM:SS)
@@ -145,7 +237,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
         const formattedVolume = formattedCandles.map((c: any) => ({
           time: c.time,
           value: c.volume,
-          color: c.close >= c.open ? "rgba(0, 245, 160, 0.35)" : "rgba(255, 73, 92, 0.35)",
+          color: c.close >= c.open ? activeThemeRef.current.volUpColor : activeThemeRef.current.volDownColor,
         }));
 
         if (!chart) {
@@ -189,11 +281,11 @@ export const TradingViewChart: React.FC<ChartProps> = ({
           chartRef.current = chart;
 
           const candlestickSeries = chart.addSeries(CandlestickSeries, {
-            upColor: "#00F5A0",
-            downColor: "#FF495C",
+            upColor: activeThemeRef.current.upColor,
+            downColor: activeThemeRef.current.downColor,
             borderVisible: false,
-            wickUpColor: "#00F5A0",
-            wickDownColor: "#FF495C",
+            wickUpColor: activeThemeRef.current.upColor,
+            wickDownColor: activeThemeRef.current.downColor,
           });
 
           seriesRef.current = candlestickSeries;
@@ -305,7 +397,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
                     const combinedVolume = combined.map((c: any) => ({
                       time: c.time,
                       value: c.volume,
-                      color: c.close >= c.open ? "rgba(0, 245, 160, 0.35)" : "rgba(255, 73, 92, 0.35)",
+                      color: c.close >= c.open ? activeThemeRef.current.volUpColor : activeThemeRef.current.volDownColor,
                     }));
 
                     candlestickSeries.setData(combined);
@@ -426,7 +518,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
               volumeSeriesRef.current.update({
                 time: targetBarTime,
                 value: 10,
-                color: "rgba(0, 245, 160, 0.35)",
+                color: activeThemeRef.current.volUpColor,
               });
             }
 
@@ -479,7 +571,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
               volumeSeriesRef.current.update({
                 time: activeCandle.time,
                 value: activeCandle.volume,
-                color: activeCandle.close >= activeCandle.open ? "rgba(0, 245, 160, 0.35)" : "rgba(255, 73, 92, 0.35)",
+                color: activeCandle.close >= activeCandle.open ? activeThemeRef.current.volUpColor : activeThemeRef.current.volDownColor,
               });
             }
           } catch (e) {}
@@ -687,6 +779,41 @@ export const TradingViewChart: React.FC<ChartProps> = ({
                   >
                     {indicatorVisibility.ema9 ? <Eye size={13} /> : <EyeOff size={13} />}
                   </button>
+                </div>
+
+                <div style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.5px", borderBottom: "1px solid rgba(255, 255, 255, 0.08)", paddingBottom: "4px", marginTop: "6px" }}>
+                  CANDLE & VOLUME THEME
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                  {Object.values(CANDLE_THEMES).map((theme) => {
+                    const isSelected = theme.id === selectedThemeId;
+                    return (
+                      <button
+                        key={theme.id}
+                        onClick={() => handleThemeChange(theme.id)}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          padding: "4px 8px",
+                          borderRadius: "4px",
+                          background: isSelected ? "rgba(255, 255, 255, 0.12)" : "transparent",
+                          border: isSelected ? "1px solid rgba(255, 255, 255, 0.25)" : "1px solid transparent",
+                          cursor: "pointer",
+                          transition: "all 0.2s ease",
+                        }}
+                      >
+                        <span style={{ fontSize: "11px", fontWeight: isSelected ? 700 : 500, color: isSelected ? "#FFFFFF" : "var(--text-secondary)" }}>
+                          {theme.name}
+                        </span>
+                        <div style={{ display: "flex", alignItems: "center", gap: "3px" }}>
+                          <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: theme.upColor }} />
+                          <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: theme.downColor }} />
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}
