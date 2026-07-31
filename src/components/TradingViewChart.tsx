@@ -6,7 +6,15 @@ import {
   LineSeries,
   HistogramSeries,
 } from "lightweight-charts";
-import { Clock, Eye, EyeOff, ChevronDown, ChevronUp, Sliders } from "lucide-react";
+import { Clock, Eye, EyeOff, ChevronDown, ChevronUp, Sliders, Layers } from "lucide-react";
+import {
+  detectFVGs,
+  detectOrderBlocks,
+  detectMarketStructure,
+  FVGPattern,
+  OrderBlockPattern,
+  MarketStructureBreak,
+} from "../utils/smcEngine";
 
 export interface CandleTheme {
   id: string;
@@ -213,6 +221,226 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     }
   };
 
+  // SMC Fair Value Gaps (FVG) State
+  const [showFVG, setShowFVG] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("chart_show_fvg") !== "false";
+    } catch {}
+    return true;
+  });
+
+  const toggleFVG = () => {
+    setShowFVG((prev) => {
+      const next = !prev;
+      try { localStorage.setItem("chart_show_fvg", String(next)); } catch {}
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    drawSMCBoxes();
+  }, [showFVG]);
+
+  // SMC Order Blocks (OB) State
+  const [showOB, setShowOB] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("chart_show_ob") !== "false";
+    } catch {}
+    return true;
+  });
+
+  const toggleOB = () => {
+    setShowOB((prev) => {
+      const next = !prev;
+      try { localStorage.setItem("chart_show_ob", String(next)); } catch {}
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    drawSMCBoxes();
+  }, [showOB]);
+
+  // SMC Market Structure (BOS & CHoCH) State
+  const [showStructure, setShowStructure] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("chart_show_structure") !== "false";
+    } catch {}
+    return true;
+  });
+
+  const toggleStructure = () => {
+    setShowStructure((prev) => {
+      const next = !prev;
+      try { localStorage.setItem("chart_show_structure", String(next)); } catch {}
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    drawSMCBoxes();
+  }, [showStructure]);
+
+  const smcCanvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Render 2D Shaded Rectangle Boxes for FVGs & OBs + Market Structure Lines (BOS/CHoCH)
+  const drawSMCBoxes = () => {
+    const canvas = smcCanvasRef.current;
+    if (!canvas || !chartRef.current || !seriesRef.current) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const width = chartContainerRef.current?.clientWidth || canvas.width;
+    const height = chartContainerRef.current?.clientHeight || canvas.height;
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+
+    ctx.clearRect(0, 0, width, height);
+
+    const timeScale = chartRef.current.timeScale();
+    const series = seriesRef.current;
+
+    const maxVisibleX = width - 70; // Hard boundary to prevent elements from bleeding into price scale axis
+
+    // 1. Draw Shaded Valid Active FVG Boxes
+    if (showFVG && allCandlesRef.current.length >= 3) {
+      const activeFVGs = detectFVGs(allCandlesRef.current)
+        .filter((f) => !f.mitigated)
+        .slice(-4);
+
+      activeFVGs.forEach((fvg) => {
+        const yTop = series.priceToCoordinate(fvg.top);
+        const yBot = series.priceToCoordinate(fvg.bottom);
+        const xStart = timeScale.timeToCoordinate(fvg.startTime);
+        const xEnd = timeScale.timeToCoordinate(fvg.endTime);
+
+        if (yTop !== null && yBot !== null) {
+          const isBull = fvg.type === "BULLISH";
+          const startX = xStart !== null ? Math.max(0, xStart) : 0;
+          const endX = xEnd !== null ? Math.min(maxVisibleX, xEnd) : maxVisibleX;
+          const boxWidth = endX - startX;
+
+          if (boxWidth <= 5 || startX >= maxVisibleX) return;
+
+          ctx.fillStyle = isBull ? "rgba(0, 245, 160, 0.14)" : "rgba(255, 73, 92, 0.14)";
+          ctx.fillRect(startX, yTop, boxWidth, yBot - yTop);
+
+          ctx.strokeStyle = isBull ? "rgba(0, 245, 160, 0.6)" : "rgba(255, 73, 92, 0.6)";
+          ctx.lineWidth = 1;
+          ctx.strokeRect(startX, yTop, boxWidth, yBot - yTop);
+
+          ctx.fillStyle = isBull ? "#00F5A0" : "#FF495C";
+          ctx.font = "bold 9px monospace";
+          ctx.fillText(isBull ? "BULL FVG" : "BEAR FVG", startX + 4, yTop + 11);
+        }
+      });
+    }
+
+    // 2. Draw Shaded Valid Active OB Boxes
+    if (showOB && allCandlesRef.current.length >= 5) {
+      const activeOBs = detectOrderBlocks(allCandlesRef.current)
+        .filter((o) => !o.mitigated)
+        .slice(-3);
+
+      activeOBs.forEach((ob) => {
+        const yTop = series.priceToCoordinate(ob.top);
+        const yBot = series.priceToCoordinate(ob.bottom);
+        const xStart = timeScale.timeToCoordinate(ob.startTime);
+        const xEnd = timeScale.timeToCoordinate(ob.endTime);
+
+        if (yTop !== null && yBot !== null) {
+          const isBull = ob.type === "BULLISH_OB";
+          const startX = xStart !== null ? Math.max(0, xStart) : 0;
+          const endX = xEnd !== null ? Math.min(maxVisibleX, xEnd) : maxVisibleX;
+          const boxWidth = endX - startX;
+
+          if (boxWidth <= 5 || startX >= maxVisibleX) return;
+
+          ctx.fillStyle = isBull ? "rgba(0, 229, 255, 0.18)" : "rgba(236, 72, 153, 0.18)";
+          ctx.fillRect(startX, yTop, boxWidth, yBot - yTop);
+
+          ctx.strokeStyle = isBull ? "rgba(0, 229, 255, 0.8)" : "rgba(236, 72, 153, 0.8)";
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(startX, yTop, boxWidth, yBot - yTop);
+
+          ctx.fillStyle = isBull ? "#00E5FF" : "#EC4899";
+          ctx.font = "bold 9px monospace";
+          ctx.fillText(isBull ? "DEMAND OB" : "SUPPLY OB", startX + 4, yTop + 11);
+        }
+      });
+    }
+
+    // 3. Draw Market Structure Lines (Macro/Major BOS & CHoCH + Micro/Internal iBOS & iCHoCH)
+    if (showStructure && allCandlesRef.current.length >= 10) {
+      const structBreaks = detectMarketStructure(allCandlesRef.current).slice(-8);
+
+      structBreaks.forEach((sb) => {
+        const yLine = series.priceToCoordinate(sb.level);
+        const xSwing = timeScale.timeToCoordinate(sb.swingTime);
+        const xBreak = timeScale.timeToCoordinate(sb.breakTime);
+
+        if (yLine !== null) {
+          const isBull = sb.type.startsWith("BULLISH");
+          const isChoch = sb.type.includes("CHOCH");
+          const isMajor = sb.category === "MAJOR";
+
+          const startX = xSwing !== null ? Math.max(0, xSwing) : 0;
+          const endX = xBreak !== null ? Math.min(maxVisibleX, xBreak) : maxVisibleX;
+          const lineWidth = endX - startX;
+
+          if (lineWidth <= 5 || startX >= maxVisibleX) return;
+
+          // Color & Line Style Scheme:
+          // Major (Macro): Bullish = Mint (#00F5A0), Bearish = Crimson (#FF495C), Thicker line
+          // Internal (Micro): Bullish = Cyan (#00E5FF), Bearish = Pink (#EC4899), Fine line
+          let strokeColor = isBull ? "#00F5A0" : "#FF495C";
+          if (!isMajor) {
+            strokeColor = isBull ? "#00E5FF" : "#EC4899";
+          }
+
+          ctx.strokeStyle = strokeColor;
+          ctx.lineWidth = isMajor ? (isChoch ? 2.0 : 1.5) : (isChoch ? 1.2 : 1.0);
+
+          // Line Dash:
+          // Major BOS = Long dash [6, 4], Major CHoCH = Solid []
+          // Internal BOS = Fine Dotted [2, 3], Internal CHoCH = Fine Solid []
+          if (isMajor) {
+            ctx.setLineDash(isChoch ? [] : [6, 4]);
+          } else {
+            ctx.setLineDash(isChoch ? [] : [2, 3]);
+          }
+
+          ctx.beginPath();
+          ctx.moveTo(startX, yLine);
+          ctx.lineTo(endX, yLine);
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          // Centered Labels:
+          // Major -> "MAJOR BOS 🟢" / "MAJOR CHoCH 🔴"
+          // Internal -> "iBOS 🟢" / "iCHoCH 🔴"
+          let labelText = "";
+          if (isMajor) {
+            labelText = isChoch ? (isBull ? "MAJOR CHoCH 🟢" : "MAJOR CHoCH 🔴") : (isBull ? "MAJOR BOS 🟢" : "MAJOR BOS 🔴");
+          } else {
+            labelText = isChoch ? (isBull ? "iCHoCH 🟢" : "iCHoCH 🔴") : (isBull ? "iBOS 🟢" : "iBOS 🔴");
+          }
+
+          const centerX = startX + lineWidth / 2;
+          const labelY = isBull ? yLine - 5 : yLine + 12;
+
+          ctx.fillStyle = strokeColor;
+          ctx.font = isMajor ? "bold 10px monospace" : "bold 9px monospace";
+          ctx.textAlign = "center";
+          ctx.fillText(labelText, centerX, labelY);
+          ctx.textAlign = "left";
+        }
+      });
+    }
+  };
+
   // Toggle Hollow Candles Mode (persisted to localStorage)
   const toggleHollowMode = () => {
     const nextHollow = !isHollowMode;
@@ -367,6 +595,9 @@ export const TradingViewChart: React.FC<ChartProps> = ({
           candlestickSeries.setData(formattedCandles);
           volumeSeries.setData(formattedVolume);
 
+          // Draw 2D SMC Shaded Box Overlays
+          drawSMCBoxes();
+
           if (showIndicators && formattedCandles.length > 9) {
             // 1. SMA 20
             if (formattedCandles.length > 20) {
@@ -414,8 +645,9 @@ export const TradingViewChart: React.FC<ChartProps> = ({
           chart.timeScale().fitContent();
           chart.timeScale().applyOptions({ rightOffset: 5 });
 
-          // Scroll listener for Lazy Loading
+          // Scroll listener for Lazy Loading & SMC Canvas Box redraw on scroll/zoom
           chart.timeScale().subscribeVisibleLogicalRangeChange(async (newRange: any) => {
+            drawSMCBoxes();
             if (!newRange || isFetchingHistoricalRef.current || (customCandles && customCandles.length > 0)) return;
 
             if (newRange.from < 5) {
@@ -539,6 +771,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
           if (volumeSeriesRef.current) {
             volumeSeriesRef.current.setData(formattedVolume);
           }
+          drawSMCBoxes();
         }
       } catch (e) {}
     }, 60000);
@@ -683,6 +916,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
             }
           } catch (e) {}
         }
+        drawSMCBoxes();
       }
 
       animId = requestAnimationFrame(animateLerp);
@@ -924,6 +1158,85 @@ export const TradingViewChart: React.FC<ChartProps> = ({
                 </div>
 
                 <div style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.5px", borderBottom: "1px solid rgba(255, 255, 255, 0.08)", paddingBottom: "4px", marginTop: "8px" }}>
+                  SMART MONEY CONCEPTS (SMC)
+                </div>
+
+                {/* 1. Fair Value Gaps (FVG) */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "2px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <Layers size={12} color="#00F5A0" />
+                    <span style={{ fontSize: "11px", fontWeight: 600, color: showFVG ? "#FFFFFF" : "var(--text-muted)" }}>
+                      Fair Value Gaps (FVG)
+                    </span>
+                  </div>
+                  <button
+                    onClick={toggleFVG}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: showFVG ? "var(--accent-green)" : "var(--text-muted)",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      padding: "2px",
+                    }}
+                    title={showFVG ? "Hide Fair Value Gaps" : "Show Fair Value Gaps"}
+                  >
+                    {showFVG ? <Eye size={13} /> : <EyeOff size={13} />}
+                  </button>
+                </div>
+
+                {/* 2. Order Blocks (OB) */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "4px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span style={{ width: "8px", height: "8px", borderRadius: "2px", background: "#FF495C" }} />
+                    <span style={{ fontSize: "11px", fontWeight: 600, color: showOB ? "#FFFFFF" : "var(--text-muted)" }}>
+                      Order Blocks (OB)
+                    </span>
+                  </div>
+                  <button
+                    onClick={toggleOB}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: showOB ? "#FF495C" : "var(--text-muted)",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      padding: "2px",
+                    }}
+                    title={showOB ? "Hide Order Blocks" : "Show Order Blocks"}
+                  >
+                    {showOB ? <Eye size={13} /> : <EyeOff size={13} />}
+                  </button>
+                </div>
+
+                {/* 3. Market Structure (BOS / CHoCH) */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "4px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span style={{ width: "8px", height: "2px", background: "#00F5A0" }} />
+                    <span style={{ fontSize: "11px", fontWeight: 600, color: showStructure ? "#FFFFFF" : "var(--text-muted)" }}>
+                      Structure (BOS / CHoCH)
+                    </span>
+                  </div>
+                  <button
+                    onClick={toggleStructure}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: showStructure ? "#00F5A0" : "var(--text-muted)",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      padding: "2px",
+                    }}
+                    title={showStructure ? "Hide Market Structure" : "Show Market Structure"}
+                  >
+                    {showStructure ? <Eye size={13} /> : <EyeOff size={13} />}
+                  </button>
+                </div>
+
+                <div style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.5px", borderBottom: "1px solid rgba(255, 255, 255, 0.08)", paddingBottom: "4px", marginTop: "8px" }}>
                   CANDLE BODY STYLE
                 </div>
 
@@ -979,6 +1292,51 @@ export const TradingViewChart: React.FC<ChartProps> = ({
               title={indicatorVisibility.ema9 ? "Hide EMA 9" : "Show EMA 9"}
             >
               {indicatorVisibility.ema9 ? <Eye size={11} /> : <EyeOff size={11} />}
+            </button>
+          </div>
+
+          <span style={{ color: "rgba(255, 255, 255, 0.2)" }}>•</span>
+
+          {/* SMC FVG Quick Eye Badge */}
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: showFVG ? "#00F5A0" : "var(--text-muted)" }} />
+            <span style={{ fontSize: "10px", fontWeight: 700, color: showFVG ? "#00F5A0" : "var(--text-muted)" }}>SMC FVG</span>
+            <button
+              onClick={toggleFVG}
+              style={{ background: "transparent", border: "none", color: showFVG ? "var(--accent-green)" : "var(--text-muted)", cursor: "pointer", padding: 0, display: "flex", alignItems: "center" }}
+              title={showFVG ? "Hide Fair Value Gaps" : "Show Fair Value Gaps"}
+            >
+              {showFVG ? <Eye size={11} /> : <EyeOff size={11} />}
+            </button>
+          </div>
+
+          <span style={{ color: "rgba(255, 255, 255, 0.2)" }}>•</span>
+
+          {/* SMC OB Quick Eye Badge */}
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <span style={{ width: "6px", height: "6px", borderRadius: "2px", background: showOB ? "#FF495C" : "var(--text-muted)" }} />
+            <span style={{ fontSize: "10px", fontWeight: 700, color: showOB ? "#FF495C" : "var(--text-muted)" }}>SMC OB</span>
+            <button
+              onClick={toggleOB}
+              style={{ background: "transparent", border: "none", color: showOB ? "#FF495C" : "var(--text-muted)", cursor: "pointer", padding: 0, display: "flex", alignItems: "center" }}
+              title={showOB ? "Hide Order Blocks" : "Show Order Blocks"}
+            >
+              {showOB ? <Eye size={11} /> : <EyeOff size={11} />}
+            </button>
+          </div>
+
+          <span style={{ color: "rgba(255, 255, 255, 0.2)" }}>•</span>
+
+          {/* SMC Struct Quick Eye Badge */}
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <span style={{ width: "8px", height: "2px", background: showStructure ? "#00F5A0" : "var(--text-muted)" }} />
+            <span style={{ fontSize: "10px", fontWeight: 700, color: showStructure ? "#00F5A0" : "var(--text-muted)" }}>SMC Struct</span>
+            <button
+              onClick={toggleStructure}
+              style={{ background: "transparent", border: "none", color: showStructure ? "#00F5A0" : "var(--text-muted)", cursor: "pointer", padding: 0, display: "flex", alignItems: "center" }}
+              title={showStructure ? "Hide Market Structure" : "Show Market Structure"}
+            >
+              {showStructure ? <Eye size={11} /> : <EyeOff size={11} />}
             </button>
           </div>
         </div>
@@ -1041,6 +1399,17 @@ export const TradingViewChart: React.FC<ChartProps> = ({
           ⚠️ {error}
         </div>
       )}
+
+      {/* 2D Shaded SMC Overlay Canvas */}
+      <canvas
+        ref={smcCanvasRef}
+        style={{
+          position: "absolute",
+          inset: 0,
+          pointerEvents: "none",
+          zIndex: 10,
+        }}
+      />
 
       {/* Canvas Container */}
       <div ref={chartContainerRef} style={{ width: "100%", height: "100%", minHeight: "520px" }} />
