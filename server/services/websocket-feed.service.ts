@@ -1,80 +1,167 @@
 import { WebSocketServer, WebSocket } from "ws";
 import { MarketDataService } from "./market-data.service";
+import { DhanAuthService } from "./dhan-auth.service";
+
+interface DepthLevel {
+  price: number;
+  quantity: number;
+  orders: number;
+}
+
+interface DepthBook {
+  bids: DepthLevel[];
+  asks: DepthLevel[];
+}
+
+interface TickPayload {
+  securityId: string;
+  exchangeSegment: string;
+  type?: string;
+  ltp?: number;
+  previousClose?: number;
+  timestamp?: number;
+}
 
 export class WebSocketFeedService {
+  private static wsReady: Promise<any> | null = null;
+  private static depthBySymbol: Map<string, DepthBook> = new Map();
+
+  /** Lazily connect the Dhan market feed once; wire tick + depth handlers. */
+  private static async getWiredClient(): Promise<any> {
+    if (!this.wsReady) {
+      this.wsReady = (async () => {
+        const client = await DhanAuthService.getDhanClient();
+        const ws = client.ws;
+
+        ws.market.on("tick", (tick: TickPayload) => {
+          const config = MarketDataService.getSymbolConfigById(tick.securityId);
+          if (!config) return;
+          if (typeof tick.ltp === "number" && tick.ltp > 0) {
+            config.basePrice = tick.ltp;
+          }
+          if (typeof tick.previousClose === "number" && tick.previousClose > 0) {
+            config.prevClose = tick.previousClose;
+          }
+        });
+
+        if (!ws.depth) {
+          ws.enableDepth("twenty");
+        }
+        ws.depth.on("depth20", (event: any) => {
+          if (!event || !Array.isArray(event.levels)) return;
+          const key = String(event.securityId);
+          const levels = event.levels.map((l: any) => ({
+            price: Number(l.price),
+            quantity: Number(l.qty ?? l.quantity ?? 0),
+            orders: Number(l.orders ?? 1),
+          }));
+          const book = this.depthBySymbol.get(key) || { bids: [], asks: [] };
+          if (event.type === "depth-20-bid") {
+            book.bids = levels;
+          } else if (event.type === "depth-20-ask") {
+            book.asks = levels;
+          }
+          this.depthBySymbol.set(key, book);
+        });
+
+        await ws.connect();
+        return client;
+      })();
+      this.wsReady.catch(() => {
+        this.wsReady = null;
+      });
+    }
+    return this.wsReady;
+  }
+
+  private static async subscribeInstrument(instrument: { securityId: string; exchangeSegment: string }): Promise<void> {
+    try {
+      const client = await this.getWiredClient();
+      client.ws.market.subscribe([instrument]);
+      if (client.ws.depth) {
+        client.ws.depth.subscribe([instrument]);
+      }
+    } catch (e) {}
+  }
+
+  private static async unsubscribeInstrument(instrument: { securityId: string; exchangeSegment: string }): Promise<void> {
+    try {
+      const client = await this.getWiredClient();
+      client.ws.market.unsubscribe([instrument]);
+      if (client.ws.depth) {
+        client.ws.depth.unsubscribe([instrument]);
+      }
+    } catch (e) {}
+  }
+
   public static attach(wss: WebSocketServer): void {
     wss.on("connection", (ws: WebSocket) => {
       console.log("🔌 React UI WebSocket client connected");
 
-      let activeSymbol = "nifty";
       let activeConfig = MarketDataService.getSymbolConfig("nifty");
+      let activeInstrument: { securityId: string; exchangeSegment: string } | null = null;
+      let lastSentPrice: number | null = null;
+      let lastDepthSentAt = 0;
+
+      const sendTick = () => {
+        if (ws.readyState !== WebSocket.OPEN) return;
+        if (!activeConfig.basePrice) return;
+        const currentPrice = activeConfig.basePrice;
+        const prevClose = activeConfig.prevClose || currentPrice;
+        const depth = this.depthBySymbol.get(activeConfig.id);
+        const now = Date.now();
+
+        // Only push a tick when the real price changed, or when the order book
+        // refreshed (so the depth panel stays live without moving the price line).
+        const priceChanged = currentPrice !== lastSentPrice;
+        const depthRefreshed = depth !== undefined && now - lastDepthSentAt > 1000;
+        if (!priceChanged && !depthRefreshed) return;
+
+        lastSentPrice = currentPrice;
+        lastDepthSentAt = now;
+
+        ws.send(
+          JSON.stringify({
+            type: "tick",
+            symbol: activeConfig.name,
+            securityId: activeConfig.id,
+            ltp: currentPrice,
+            prevClose,
+            change: Number((currentPrice - prevClose).toFixed(2)),
+            pChange: Number(((currentPrice - prevClose) / prevClose) * 100),
+            volume: activeConfig.dayVolume,
+            bids: depth?.bids || [],
+            asks: depth?.asks || [],
+            timestamp: new Date().toISOString(),
+          })
+        );
+      };
+
+      const interval = setInterval(sendTick, 100);
 
       ws.on("message", (message: any) => {
         try {
           const parsed = JSON.parse(message.toString());
           if (parsed.type === "subscribe" && parsed.symbol) {
             const symKey = String(parsed.symbol).toLowerCase();
-            activeSymbol = symKey;
             activeConfig = MarketDataService.getSymbolConfig(symKey);
+            const nextInstrument = { securityId: activeConfig.id, exchangeSegment: activeConfig.segment };
             console.log(`📡 WebSocket client subscribed to symbol: ${activeConfig.name} (${activeConfig.id})`);
+            if (activeInstrument) {
+              this.unsubscribeInstrument(activeInstrument);
+            }
+            activeInstrument = nextInstrument;
+            this.subscribeInstrument(nextInstrument);
           }
-        } catch (e) { }
+        } catch (e) {}
       });
-
-      // Send continuous live market ticks every 200ms anchored to exact DhanHQ spot price
-      const interval = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) {
-          const base = activeConfig.basePrice || (activeSymbol === "banknifty" ? 52100 : activeSymbol === "sensex" ? 79800 : 24262.70);
-          const prevClose = activeConfig.prevClose || base * 0.994;
-
-          // Continuous micro-tick walk anchored strictly to live DhanHQ basePrice (±0.12 pts max)
-          const tickJitter = Math.sin(Date.now() / 200) * 0.10 + (Math.random() - 0.5) * 0.05;
-          const currentPrice = Number((base + tickJitter).toFixed(2));
-
-          const dayChange = Number((currentPrice - prevClose).toFixed(2));
-          const dayPChange = Number(((dayChange / prevClose) * 100).toFixed(2));
-          const dayVolume = (activeConfig.dayVolume || 10000000) + Math.floor(Math.random() * 25);
-
-          const step = Math.max(0.05, currentPrice * 0.0001);
-
-          const bids = Array.from({ length: 10 }, (_, idx) => {
-            const qty = (10 - idx) * 100;
-            return {
-              price: Number((currentPrice - (idx + 1) * step).toFixed(2)),
-              quantity: qty,
-              orders: Math.max(1, Math.floor(qty / 45)),
-            };
-          });
-
-          const asks = Array.from({ length: 10 }, (_, idx) => {
-            const qty = (idx + 1) * 100;
-            return {
-              price: Number((currentPrice + (idx + 1) * step).toFixed(2)),
-              quantity: qty,
-              orders: Math.max(1, Math.floor(qty / 45)),
-            };
-          });
-
-          ws.send(
-            JSON.stringify({
-              type: "tick",
-              symbol: activeConfig.name,
-              securityId: activeConfig.id,
-              ltp: currentPrice,
-              prevClose,
-              change: dayChange,
-              pChange: dayPChange,
-              volume: dayVolume,
-              bids,
-              asks,
-              timestamp: new Date().toISOString(),
-            })
-          );
-        }
-      }, 50);
 
       ws.on("close", () => {
         clearInterval(interval);
+        if (activeInstrument) {
+          this.unsubscribeInstrument(activeInstrument);
+          activeInstrument = null;
+        }
         console.log("🔌 React UI WebSocket client disconnected");
       });
     });

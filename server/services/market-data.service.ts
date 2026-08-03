@@ -13,19 +13,24 @@ export interface SymbolConfig {
 }
 
 export class MarketDataService {
+  /** Seed values are zeros — real prices arrive from the 5s Dhan intraday sync / live market feed. */
   public static SYMBOL_MAP: Record<string, SymbolConfig> = {
-    nifty: { id: "13", segment: "IDX_I", instrument: "INDEX", name: "NIFTY 50", basePrice: 24255.10, prevClose: 24176.65, dayVolume: 355926184 },
-    banknifty: { id: "25", segment: "IDX_I", instrument: "INDEX", name: "NIFTY BANK", basePrice: 56891.95, prevClose: 56950.00, dayVolume: 185430200 },
-    sensex: { id: "51", segment: "IDX_I", instrument: "INDEX", name: "SENSEX", basePrice: 77652.95, prevClose: 77800.00, dayVolume: 120450900 },
-    reliance: { id: "2885", segment: "NSE_EQ", instrument: "EQUITY", name: "RELIANCE", basePrice: 1285.50, prevClose: 1285.40, dayVolume: 12450600 },
-    hdfcbank: { id: "1333", segment: "NSE_EQ", instrument: "EQUITY", name: "HDFCBANK", basePrice: 750.50, prevClose: 754.20, dayVolume: 18940200 },
-    tcs: { id: "11536", segment: "NSE_EQ", instrument: "EQUITY", name: "TCS", basePrice: 4250.00, prevClose: 4252.10, dayVolume: 8450100 },
-    infy: { id: "1594", segment: "NSE_EQ", instrument: "EQUITY", name: "INFY", basePrice: 1850.00, prevClose: 1836.80, dayVolume: 9240800 },
+    nifty: { id: "13", segment: "IDX_I", instrument: "INDEX", name: "NIFTY 50", basePrice: 0, prevClose: 0, dayVolume: 0 },
+    banknifty: { id: "25", segment: "IDX_I", instrument: "INDEX", name: "NIFTY BANK", basePrice: 0, prevClose: 0, dayVolume: 0 },
+    sensex: { id: "51", segment: "IDX_I", instrument: "INDEX", name: "SENSEX", basePrice: 0, prevClose: 0, dayVolume: 0 },
+    reliance: { id: "2885", segment: "NSE_EQ", instrument: "EQUITY", name: "RELIANCE", basePrice: 0, prevClose: 0, dayVolume: 0 },
+    hdfcbank: { id: "1333", segment: "NSE_EQ", instrument: "EQUITY", name: "HDFCBANK", basePrice: 0, prevClose: 0, dayVolume: 0 },
+    tcs: { id: "11536", segment: "NSE_EQ", instrument: "EQUITY", name: "TCS", basePrice: 0, prevClose: 0, dayVolume: 0 },
+    infy: { id: "1594", segment: "NSE_EQ", instrument: "EQUITY", name: "INFY", basePrice: 0, prevClose: 0, dayVolume: 0 },
   };
 
   public static getSymbolConfig(symbolKey: string): SymbolConfig {
     const key = (symbolKey || "nifty").toLowerCase();
     return this.SYMBOL_MAP[key] || this.SYMBOL_MAP.nifty;
+  }
+
+  public static getSymbolConfigById(securityId: string): SymbolConfig | undefined {
+    return Object.values(this.SYMBOL_MAP).find((c) => c.id === String(securityId));
   }
 
   /**
