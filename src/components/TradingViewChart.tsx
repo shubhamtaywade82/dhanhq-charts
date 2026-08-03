@@ -38,7 +38,22 @@ import {
   ICTJudasSwing,
   ICTAMDCycle,
 } from "../utils/ictEngine";
-import { scanSetups, SetupSignal } from "../utils/setupScanner";
+import { scanSetups, resampleCandles, SetupSignal, HtfBias, strikeIntervalForSymbol } from "../utils/setupScanner";
+import {
+  PaperAccount,
+  createPaperAccount,
+  loadPaperAccount,
+  savePaperAccount,
+  resetPaperAccount,
+  paperEquity,
+  realizedPnl,
+  openPaperPosition,
+  markPaperPosition,
+  closePaperPosition,
+  isSessionEndISt,
+  fetchPaperQuote,
+  PaperOptionType,
+} from "../utils/paperTrader";
 
 export interface CandleTheme {
   id: string;
@@ -138,7 +153,7 @@ export const CANDLE_THEMES: Record<string, CandleTheme> = {
   },
 };
 
-interface ChartProps {
+export interface ChartProps {
   symbol: string;
   interval: string;
   showIndicators?: boolean;
@@ -146,6 +161,12 @@ interface ChartProps {
   customCandles?: any[];
   tick?: any;
 }
+
+// HTF bias ladder: only timeframes DhanHQ serves (1/5/15/30/60m) as bases
+const autoHtfMult = (baseMin: number): number => {
+  const ladder: Record<number, number> = { 1: 5, 5: 3, 15: 4, 30: 2, 60: 4 };
+  return ladder[baseMin] ?? 4;
+};
 
 export const TradingViewChart: React.FC<ChartProps> = ({
   symbol,
@@ -236,6 +257,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
   // and scroll handlers re-project cached elements instead of re-running all 13
   // detectors on every frame (detectors only depend on candle data, not toggles).
   const smcResultsRef = useRef<any>({ version: "" });
+  const htfResultsRef = useRef<any>({ version: "" });
   const drawPendingRef = useRef(false);
   const lastDrawnCandleRef = useRef("");
   const scanVersionRef = useRef("");
@@ -263,6 +285,17 @@ export const TradingViewChart: React.FC<ChartProps> = ({
   const latestNCandles = (n: number) => {
     const candles = allCandlesRef.current;
     return candles.length > n ? candles.slice(-n) : candles;
+  };
+
+  const getHtfCached = (mult: number, key: string, compute: () => any) => {
+    const version = `${candlesVersion(allCandlesRef.current)}|${mult}`;
+    if (htfResultsRef.current.version !== version) {
+      htfResultsRef.current = { version };
+    }
+    if (htfResultsRef.current[key] === undefined) {
+      htfResultsRef.current[key] = compute();
+    }
+    return htfResultsRef.current[key];
   };
 
   const scheduleDraw = () => {
@@ -541,11 +574,168 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     });
   };
 
+  // MTF bias timeframe: AUTO uses the DhanHQ ladder, otherwise a multiple of the base interval
+  const [biasTfMult, setBiasTfMult] = useState<number | null>(() => {
+    try {
+      const saved = localStorage.getItem("chart_bias_tf_mult");
+      if (saved !== null && saved !== "auto") return Number(saved) || null;
+    } catch {}
+    return null;
+  });
+
+  const changeBiasTf = (mult: number | null) => {
+    setBiasTfMult(mult);
+    try { localStorage.setItem("chart_bias_tf_mult", mult === null ? "auto" : String(mult)); } catch {}
+  };
+
   const [setupSignal, setSetupSignal] = useState<SetupSignal | null>(null);
+
+  // ---- Paper trading engine state (forward-testing the setup scanner) ----
+  const [paperEnabled, setPaperEnabled] = useState(() => {
+    try { return localStorage.getItem("dhan_paper_enabled") === "1"; } catch { return false; }
+  });
+  const [paperAccount, setPaperAccount] = useState<PaperAccount>(() => loadPaperAccount(symbol) ?? createPaperAccount(symbol));
+  const [paperLog, setPaperLog] = useState<string[]>([]);
+  const paperEnabledRef = useRef(paperEnabled);
+  useEffect(() => {
+    paperEnabledRef.current = paperEnabled;
+  }, [paperEnabled]);
+  const paperRef = useRef<{ signal: SetupSignal | null; acc: PaperAccount; spot: number }>({
+    signal: null,
+    acc: paperAccount,
+    spot: 0,
+  });
+  useEffect(() => {
+    paperRef.current = {
+      signal: setupSignal,
+      acc: paperAccount,
+      spot: targetPriceRef.current ?? lastCandleValRef.current?.close ?? 0,
+    };
+    savePaperAccount(paperAccount);
+  }, [setupSignal, paperAccount]);
+
+  const togglePaper = () => {
+    setPaperEnabled((prev) => {
+      const next = !prev;
+      try { localStorage.setItem("dhan_paper_enabled", next ? "1" : "0"); } catch {}
+      return next;
+    });
+  };
+
+  const resetPaper = () => {
+    setPaperAccount(resetPaperAccount(symbol));
+    setPaperLog(["Account reset — fresh ₹100,000"]);
+  };
+
+  const closeOpenPaper = async () => {
+    const acc = paperRef.current.acc;
+    if (!acc.open) return;
+    const quote = await fetchPaperQuote(symbol, acc.open.strike, acc.open.optionType, paperRef.current.spot || 0);
+    setPaperAccount((prev) => {
+      const { acc: closedAcc, trade } = closePaperPosition(prev, quote.premium, Date.now(), "MANUAL");
+      if (trade) {
+        logPaper(`MANUAL CLOSE ${trade.optionType} ${trade.strike} ${trade.pnl >= 0 ? "+" : ""}₹${trade.pnl.toFixed(2)} (${trade.returnPct}%)`);
+      }
+      return closedAcc;
+    });
+  };
+
+  // Fresh paper account when switching symbols
+  useEffect(() => {
+    setPaperAccount(loadPaperAccount(symbol) ?? createPaperAccount(symbol));
+    setPaperLog([]);
+  }, [symbol]);
+
+  const logPaper = (msg: string) => {
+    setPaperLog((prev) => [...prev.slice(-4), msg]);
+  };
+
+  const paperTick = async () => {
+    const { signal, acc, spot } = paperRef.current;
+    const now = Date.now();
+
+    // EOD exit at 15:25 IST
+    if (acc.open && isSessionEndISt(now)) {
+      const premium = acc.open.lastPremium;
+      const { acc: nextAcc, trade } = closePaperPosition(acc, premium, now, "EOD");
+      if (trade) {
+        logPaper(`EOD CLOSE ${acc.open.optionType} ${acc.open.strike} ${trade.pnl >= 0 ? "+" : ""}₹${trade.pnl.toFixed(2)} (${trade.returnPct}%)`);
+        setPaperAccount(nextAcc);
+        return;
+      }
+    }
+
+    // Quote target: the open position, else the scanner's recommended strike
+    const open = acc.open;
+    const recommendation = signal?.recommendedStrikes;
+    const wantOpen = !open && recommendation !== undefined;
+    const strike = open ? open.strike : recommendation?.primary.strike ?? 0;
+    const optionType: PaperOptionType | undefined = open ? open.optionType : recommendation?.optionType;
+    if (!strike || !optionType || (!open && !wantOpen)) return;
+
+    const quote = await fetchPaperQuote(symbol, strike, optionType, spot || 0);
+    const premium = quote.premium;
+
+    setPaperAccount((prev) => {
+      let nextAcc = prev;
+      if (prev.open) {
+        const { acc: marked, trade } = markPaperPosition(prev, premium, now);
+        if (trade) {
+          const side = `${trade.optionType} ${trade.strike}`;
+          logPaper(`${trade.exitReason === "STOP" ? "STOP" : "TARGET"} CLOSE ${side} ${trade.pnl >= 0 ? "+" : ""}₹${trade.pnl.toFixed(2)} (${trade.returnPct}%)`);
+          return marked;
+        }
+        // Bias flip: close when the scanner emits the opposite direction
+        const dir = paperRef.current.signal?.direction;
+        const flipped =
+          (prev.open.optionType === "CE" && dir === "PE_LONG") ||
+          (prev.open.optionType === "PE" && dir === "CE_LONG");
+        if (flipped) {
+          const { acc: closedAcc, trade: flipTrade } = closePaperPosition(marked, premium, now, "FLIP");
+          if (flipTrade) {
+            logPaper(`FLIP CLOSE ${flipTrade.optionType} ${flipTrade.strike} ${flipTrade.pnl >= 0 ? "+" : ""}₹${flipTrade.pnl.toFixed(2)} (${flipTrade.returnPct}%)`);
+          }
+          return closedAcc;
+        }
+        nextAcc = marked;
+      } else if (wantOpen) {
+        const opened = openPaperPosition(prev, {
+          optionType: recommendation.optionType,
+          strike: recommendation.primary.strike,
+          entryPremium: premium,
+          estimatedEntry: quote.estimated,
+          now,
+        });
+        if (opened.open) {
+          logPaper(
+            `OPEN ${opened.open.optionType} ${opened.open.strike} @ ₹${opened.open.entryPremium}${quote.estimated ? " (EST)" : ""} · stop ₹${opened.open.stopPremium} · tgt ₹${opened.open.targetPremium}`
+          );
+        }
+        nextAcc = opened;
+      }
+      return nextAcc;
+    });
+  };
 
   const runSetupScan = () => {
     const price = targetPriceRef.current ?? lastCandleValRef.current?.close;
     if (price === undefined || price === null) return;
+
+    const baseMin = parseInt(interval, 10) || 15;
+    const htfMult = biasTfMult ?? autoHtfMult(baseMin);
+    const htfMin = htfMult * baseMin;
+    const htfLabel = htfMin >= 60 ? `${htfMin / 60}h` : `${htfMin}m`;
+    const htfCandles = getHtfCached(htfMult, "candles", () =>
+      resampleCandles(allCandlesRef.current, htfMin * 60)
+    );
+    const htf: HtfBias = {
+      tfLabel: htfLabel,
+      structure: getHtfCached(htfMult, "structure", () => detectMarketStructure(htfCandles.slice(-1000))),
+      amd: getHtfCached(htfMult, "amd", () => detectAMDCycles(htfCandles.slice(-1000))),
+      liquidity: getHtfCached(htfMult, "liquidity", () => detectLiquidityPools(htfCandles.slice(-1000))),
+      judas: getHtfCached(htfMult, "judas", () => detectJudasSwings(htfCandles.slice(-1000))),
+    };
+
     const signal = scanSetups({
       lastPrice: price,
       fvg: getCached("fvg", () => detectFVGs(allCandlesRef.current)),
@@ -561,8 +751,11 @@ export const TradingViewChart: React.FC<ChartProps> = ({
       sd: getCached("sd", () => detectSupplyDemandZones(latestNCandles(1000))),
       tl: getCached("tl", () => detectTrendlineLiquidity(latestNCandles(1000))),
       cp: getCached("cp", () => detectCandlestickPatterns(latestNCandles(1000))),
+      htf,
+      symbol,
+      strikeInterval: strikeIntervalForSymbol(symbol),
     });
-    const key = `${signal.direction}|${signal.bias}|${signal.alignedCount}`;
+    const key = `${signal.direction}|${signal.bias}|${signal.alignedCount}|${signal.biasTf ?? "ltf"}|${htfMult}|${signal.recommendedStrikes?.primary.strike ?? ""}`;
     if (key !== lastSignalKeyRef.current) {
       lastSignalKeyRef.current = key;
       setSetupSignal(signal);
@@ -574,16 +767,20 @@ export const TradingViewChart: React.FC<ChartProps> = ({
   useEffect(() => {
     if (!showSetupScan) return;
     const scan = () => {
-      const version = candlesVersion(allCandlesRef.current);
+      if (paperEnabledRef.current) paperTick();
+      const baseMin = parseInt(interval, 10) || 15;
+      const htfMult = biasTfMult ?? autoHtfMult(baseMin);
+      const dataKey = `${candlesVersion(allCandlesRef.current)}|${htfMult}`;
       const price = targetPriceRef.current ?? lastCandleValRef.current?.close ?? null;
-      if (scanVersionRef.current === version && scanPriceRef.current === price) return;
-      scanVersionRef.current = version;
+      if (scanVersionRef.current === dataKey && scanPriceRef.current === price) return;
+      scanVersionRef.current = dataKey;
       scanPriceRef.current = price;
       runSetupScan();
     };
     const id = setInterval(scan, 3000);
+    scan();
     return () => clearInterval(id);
-  }, [showSetupScan]);
+  }, [showSetupScan, biasTfMult, interval]);
 
   // Single redraw trigger for every overlay feature toggle (rAF-coalesced)
   useEffect(() => {
@@ -2371,6 +2568,62 @@ export const TradingViewChart: React.FC<ChartProps> = ({
                     {showSetupScan ? "ON" : "OFF"}
                   </button>
                 </div>
+
+                {/* Paper Trading Toggle */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "4px" }}>
+                  <span style={{ fontSize: "11px", fontWeight: 600, color: paperEnabled ? "#00F5A0" : "var(--text-muted)" }}>
+                    Paper Trade (auto-enter)
+                  </span>
+                  <button
+                    onClick={togglePaper}
+                    style={{
+                      background: paperEnabled ? "rgba(0, 245, 160, 0.2)" : "rgba(255, 255, 255, 0.06)",
+                      border: paperEnabled ? "1px solid #00F5A0" : "1px solid rgba(255, 255, 255, 0.15)",
+                      color: paperEnabled ? "#00F5A0" : "var(--text-muted)",
+                      padding: "2px 8px",
+                      borderRadius: "4px",
+                      fontSize: "10px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      transition: "all 0.2s ease",
+                    }}
+                  >
+                    {paperEnabled ? "ON" : "OFF"}
+                  </button>
+                </div>
+
+                {/* MTF Bias Timeframe Selector */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "4px" }}>
+                  <span style={{ fontSize: "11px", fontWeight: 600, color: "#FFFFFF" }}>Bias Timeframe</span>
+                  <select
+                    value={biasTfMult === null ? "auto" : String(biasTfMult)}
+                    onChange={(e) => changeBiasTf(e.target.value === "auto" ? null : Number(e.target.value))}
+                    style={{
+                      background: "rgba(255, 255, 255, 0.06)",
+                      color: "var(--accent-cyan)",
+                      border: "1px solid rgba(255, 255, 255, 0.15)",
+                      borderRadius: "4px",
+                      padding: "2px 6px",
+                      fontSize: "10px",
+                      fontWeight: 700,
+                      fontFamily: "var(--font-mono)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {(() => {
+                      const baseMin = parseInt(interval, 10) || 15;
+                      const options: { mult: number | null; label: string }[] = [
+                        { mult: null, label: `AUTO (${autoHtfMult(baseMin) * baseMin}m)` },
+                        ...[2, 3, 4, 6, 12].map((m) => ({ mult: m, label: `${m * baseMin}m (${m}×)` })),
+                      ];
+                      return options.map((o) => (
+                        <option key={o.label} value={o.mult === null ? "auto" : String(o.mult)}>
+                          {o.label}
+                        </option>
+                      ));
+                    })()}
+                  </select>
+                </div>
               </div>
             )}
           </div>
@@ -2685,7 +2938,9 @@ export const TradingViewChart: React.FC<ChartProps> = ({
           color: "#8E9BAE",
         }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px" }}>
-            <span style={{ fontWeight: 700, letterSpacing: "0.5px", fontSize: "9px", color: "var(--text-muted)" }}>SETUP SCANNER</span>
+            <span style={{ fontWeight: 700, letterSpacing: "0.5px", fontSize: "9px", color: "var(--text-muted)" }}>
+              SETUP SCANNER{setupSignal.biasTf ? ` · BIAS ${setupSignal.biasTf}` : ""}
+            </span>
             {setupSignal.direction === "CE_LONG" && (
               <span style={{ fontWeight: 800, fontSize: "12px", color: "#00F5A0" }}>BUY CE LONG</span>
             )}
@@ -2717,6 +2972,25 @@ export const TradingViewChart: React.FC<ChartProps> = ({
             </span>
           </div>
 
+          {setupSignal.recommendedStrikes && (
+            <div style={{
+              marginBottom: "6px",
+              padding: "6px 8px",
+              borderRadius: "6px",
+              background: setupSignal.recommendedStrikes.optionType === "CE" ? "rgba(0, 245, 160, 0.08)" : "rgba(255, 73, 92, 0.08)",
+              border: `1px solid ${setupSignal.recommendedStrikes.optionType === "CE" ? "rgba(0, 245, 160, 0.35)" : "rgba(255, 73, 92, 0.35)"}`,
+            }}>
+              <div style={{ fontWeight: 800, fontSize: "13px", color: setupSignal.recommendedStrikes.optionType === "CE" ? "#00F5A0" : "#FF495C" }}>
+                BUY {setupSignal.recommendedStrikes.instrument} {setupSignal.recommendedStrikes.primary.strike} {setupSignal.recommendedStrikes.optionType}{" "}
+                <span style={{ fontWeight: 600, fontSize: "10px", opacity: 0.8 }}>· {setupSignal.recommendedStrikes.primary.label}</span>
+              </div>
+              <div style={{ fontSize: "9px", color: "#8E9BAE", marginTop: "1px" }}>{setupSignal.recommendedStrikes.primary.rationale}</div>
+              <div style={{ fontSize: "9px", color: "#6B7A90", marginTop: "3px" }}>
+                Alt: {setupSignal.recommendedStrikes.alternates.map((a) => `${a.strike} ${setupSignal.recommendedStrikes?.optionType} (${a.label})`).join(" · ")}
+              </div>
+            </div>
+          )}
+
           {[...setupSignal.biasFactors, ...setupSignal.confluence].map((f) => (
             <div key={f.name} style={{ display: "flex", alignItems: "center", gap: "5px", padding: "1px 0" }}>
               <span style={{
@@ -2726,8 +3000,8 @@ export const TradingViewChart: React.FC<ChartProps> = ({
                 flexShrink: 0,
                 background: f.vote === "bullish" ? "#00F5A0" : f.vote === "bearish" ? "#FF495C" : "#3A4356",
               }} />
-              <span style={{ fontWeight: 600, color: f.vote === "bullish" ? "#00F5A0" : f.vote === "bearish" ? "#FF495C" : "#6B7A90", width: "120px", flexShrink: 0 }}>
-                {f.name}
+              <span style={{ fontWeight: 600, color: f.vote === "bullish" ? "#00F5A0" : f.vote === "bearish" ? "#FF495C" : "#6B7A90", width: "130px", flexShrink: 0 }}>
+                {f.name}{f.tf ? ` · ${f.tf}` : ""}
               </span>
               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#8E9BAE" }}>{f.detail}</span>
             </div>
@@ -2738,6 +3012,86 @@ export const TradingViewChart: React.FC<ChartProps> = ({
               {setupSignal.notes.map((n, i) => (
                 <div key={i} style={{ padding: "1px 0", lineHeight: 1.4 }}>{n}</div>
               ))}
+            </div>
+          )}
+
+          {paperEnabled && paperAccount && (
+            <div style={{ marginTop: "6px", borderTop: "1px solid rgba(255, 255, 255, 0.08)", paddingTop: "5px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span style={{ fontWeight: 700, letterSpacing: "0.5px", fontSize: "9px", color: "var(--text-muted)" }}>
+                  PAPER TRADE · {symbol.toUpperCase()}
+                </span>
+                <span style={{ display: "flex", gap: "4px" }}>
+                  {paperAccount.open && (
+                    <button
+                      onClick={closeOpenPaper}
+                      style={{
+                        background: "rgba(255, 73, 92, 0.15)",
+                        border: "1px solid rgba(255, 73, 92, 0.4)",
+                        color: "#FF495C",
+                        padding: "1px 6px",
+                        borderRadius: "4px",
+                        fontSize: "9px",
+                        fontWeight: 700,
+                        cursor: "pointer",
+                      }}
+                    >
+                      CLOSE
+                    </button>
+                  )}
+                  <button
+                    onClick={resetPaper}
+                    style={{
+                      background: "rgba(255, 255, 255, 0.06)",
+                      border: "1px solid rgba(255, 255, 255, 0.15)",
+                      color: "var(--text-muted)",
+                      padding: "1px 6px",
+                      borderRadius: "4px",
+                      fontSize: "9px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    RESET
+                  </button>
+                </span>
+              </div>
+              <div style={{ display: "flex", gap: "10px", fontSize: "9px", marginTop: "3px", color: "#8E9BAE" }}>
+                <span>
+                  EQUITY{" "}
+                  <span style={{ fontWeight: 700, color: "#FFFFFF" }}>₹{paperEquity(paperAccount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                </span>
+                <span>
+                  REALIZED{" "}
+                  <span style={{ fontWeight: 700, color: realizedPnl(paperAccount) >= 0 ? "#00F5A0" : "#FF495C" }}>
+                    {realizedPnl(paperAccount) >= 0 ? "+" : ""}₹{realizedPnl(paperAccount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </span>
+                </span>
+                <span>
+                  W {paperAccount.wins} / L {paperAccount.totalTrades - paperAccount.wins}
+                </span>
+              </div>
+              {paperAccount.open ? (
+                <div style={{ marginTop: "3px", fontSize: "9px", color: "#FFFFFF" }}>
+                  OPEN {paperAccount.open.optionType} {paperAccount.open.strike} @ ₹{paperAccount.open.entryPremium}
+                  {paperAccount.open.estimatedEntry ? " (EST)" : ""} → ₹{paperAccount.open.lastPremium}{" "}
+                  <span style={{ color: paperAccount.open.lastPremium >= paperAccount.open.entryPremium ? "#00F5A0" : "#FF495C" }}>
+                    ({(((paperAccount.open.lastPremium - paperAccount.open.entryPremium) / paperAccount.open.entryPremium) * 100).toFixed(1)}%)
+                  </span>
+                  <div style={{ color: "#6B7A90" }}>
+                    STOP ₹{paperAccount.open.stopPremium} · TGT ₹{paperAccount.open.targetPremium} · MAE {paperAccount.open.maePct}% · MFE {paperAccount.open.mfePct}%
+                  </div>
+                </div>
+              ) : (
+                <div style={{ marginTop: "3px", fontSize: "9px", color: "#6B7A90" }}>STANDBY — waiting for scanner signal</div>
+              )}
+              {paperLog.length > 0 && (
+                <div style={{ marginTop: "3px", borderTop: "1px solid rgba(255, 255, 255, 0.06)", paddingTop: "3px", fontSize: "9px", color: "#6B7A90", lineHeight: 1.5 }}>
+                  {paperLog.map((l, i) => (
+                    <div key={i}>{l}</div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>

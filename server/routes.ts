@@ -198,6 +198,22 @@ router.get("/option-chain", async (req: Request, res: Response) => {
   }
 });
 
+// 9b. Live option premium quote for the paper-trading engine
+router.get("/paper/quote", async (req: Request, res: Response) => {
+  try {
+    const symbol = (req.query.symbol || "nifty").toString();
+    const strike = Number(req.query.strike);
+    const optionType = String(req.query.optionType || "CE").toUpperCase();
+    if (!strike || !["CE", "PE"].includes(optionType)) {
+      return res.status(400).json({ error: "strike and optionType (CE|PE) are required" });
+    }
+    const result = await OptionChainService.fetchLiveOptionQuote(symbol, strike, optionType);
+    res.json(result);
+  } catch (err: any) {
+    res.status(err.status || 500).json({ error: err.message, details: err.details });
+  }
+});
+
 // 10. Trader Controls (Kill Switch & P&L Exit)
 router.get("/trader-controls", async (req: Request, res: Response) => {
   try {

@@ -9,6 +9,7 @@ import type {
   TrendlineLiquidity,
 } from "./smcEngine";
 import type {
+  CandleData,
   ICTAMDCycle,
   ICTJudasSwing,
   ICTOTEZone,
@@ -24,6 +25,20 @@ export interface SetupFactor {
   vote: Bias;
   detail: string;
   aligned?: boolean;
+  tf?: string;
+}
+
+export interface StrikePick {
+  strike: number;
+  label: string;
+  rationale: string;
+}
+
+export interface StrikeRecommendation {
+  instrument: string;
+  optionType: "CE" | "PE";
+  primary: StrikePick;
+  alternates: StrikePick[];
 }
 
 export interface SetupSignal {
@@ -32,7 +47,17 @@ export interface SetupSignal {
   biasFactors: SetupFactor[];
   confluence: SetupFactor[];
   alignedCount: number;
+  biasTf?: string;
+  recommendedStrikes?: StrikeRecommendation;
   notes: string[];
+}
+
+export interface HtfBias {
+  tfLabel: string;
+  structure: MarketStructureBreak[];
+  amd: ICTAMDCycle[];
+  liquidity: LiquidityPoolPattern[];
+  judas: ICTJudasSwing[];
 }
 
 export interface SetupScanInput {
@@ -50,6 +75,41 @@ export interface SetupScanInput {
   sd: SupplyDemandZone[];
   tl: TrendlineLiquidity[];
   cp: CandlestickPattern[];
+  htf?: HtfBias;
+  symbol?: string;
+  strikeInterval?: number;
+}
+
+/** Strike width per scrip (mirrors server option-chain convention). */
+export function strikeIntervalForSymbol(symbol: string): number {
+  const key = (symbol || "").toLowerCase();
+  if (key === "banknifty" || key === "sensex") return 100;
+  if (key === "reliance" || key === "tcs") return 20;
+  if (key === "hdfcbank" || key === "infy") return 10;
+  return 50;
+}
+
+/** Aggregate candles into a higher timeframe bucket (e.g. 15m -> 60m). */
+export function resampleCandles(candles: CandleData[], barSeconds: number): CandleData[] {
+  const out: CandleData[] = [];
+  let current: CandleData | null = null;
+  let currentKey = -1;
+
+  for (const c of candles) {
+    const key = Math.floor(c.time / barSeconds) * barSeconds;
+    if (current === null || key !== currentKey) {
+      if (current) out.push(current);
+      current = { time: key, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume ?? 0 };
+      currentKey = key;
+    } else {
+      current.high = Math.max(current.high, c.high);
+      current.low = Math.min(current.low, c.low);
+      current.close = c.close;
+      current.volume = (current.volume ?? 0) + (c.volume ?? 0);
+    }
+  }
+  if (current) out.push(current);
+  return out;
 }
 
 const RECENT_WINDOW = 6 * 3600;
@@ -217,18 +277,71 @@ const longNotes = (input: SetupScanInput, price: number, side: "CE" | "PE"): str
   ];
 };
 
+const pick = (htf: SetupFactor | undefined, ltf: SetupFactor): SetupFactor => {
+  if (htf && htf.vote !== "neutral") return htf;
+  return ltf;
+};
+
+const ATM = { label: "ATM", rationale: "Most liquid — delta ~0.5, tightest spread" };
+const OTM1 = { label: "OTM 1", rationale: "Cheaper premium — delta ~0.35, best risk/reward" };
+const OTM2 = { label: "OTM 2", rationale: "Cheapest premium — max leverage, needs strong momentum" };
+
+/** Long-options strike ladder: prefer OTM1, step to OTM2 when confluence is very strong. */
+export function recommendStrikes(
+  price: number,
+  direction: SetupDirection,
+  alignedCount: number,
+  strikeInterval: number,
+  symbol: string
+): StrikeRecommendation | undefined {
+  if (direction === "NO_TRADE") return undefined;
+  const optionType = direction === "CE_LONG" ? "CE" : "PE";
+  const atm = Math.round(price / strikeInterval) * strikeInterval;
+  const dir = optionType === "CE" ? 1 : -1;
+  const primaryOffset = alignedCount >= 5 ? 2 : 1;
+  const altOffset = primaryOffset === 2 ? 1 : 2;
+  const [primaryMeta, altMeta] = primaryOffset === 2 ? [OTM2, OTM1] : [OTM1, OTM2];
+  return {
+    instrument: (symbol || "OPTION").toUpperCase(),
+    optionType,
+    primary: {
+      strike: atm + primaryOffset * dir * strikeInterval,
+      label: primaryMeta.label,
+      rationale: primaryMeta.rationale,
+    },
+    alternates: [
+      { strike: atm, label: ATM.label, rationale: ATM.rationale },
+      {
+        strike: atm + altOffset * dir * strikeInterval,
+        label: altMeta.label,
+        rationale: altMeta.rationale,
+      },
+    ],
+  };
+}
+
 export function scanSetups(input: SetupScanInput): SetupSignal {
   const now = Math.floor(Date.now() / 1000);
   const price = input.lastPrice;
 
+  const htf = input.htf;
+  const htfFactors: SetupFactor[] = htf
+    ? [
+        { ...voteFromStructure(htf.structure), tf: htf.tfLabel },
+        { ...voteFromAMD(htf.amd), tf: htf.tfLabel },
+        { ...voteFromSweep(htf.liquidity, htf.judas, now), tf: htf.tfLabel },
+      ]
+    : [];
+
   const biasFactors = [
-    voteFromStructure(input.structure),
-    voteFromAMD(input.amd),
-    voteFromSweep(input.liquidity, input.judas, now),
+    pick(htfFactors[0], voteFromStructure(input.structure)),
+    pick(htfFactors[1], voteFromAMD(input.amd)),
+    pick(htfFactors[2], voteFromSweep(input.liquidity, input.judas, now)),
   ];
   const bulls = biasFactors.filter((f) => f.vote === "bullish").length;
   const bears = biasFactors.filter((f) => f.vote === "bearish").length;
   const bias: Bias = bulls > bears ? "bullish" : bears > bulls ? "bearish" : "neutral";
+  const biasTf = biasFactors.find((f) => f.tf)?.tf;
 
   const confluence = [
     kzTiming(input.sessions, input.sb, now, bias),
@@ -253,5 +366,14 @@ export function scanSetups(input: SetupScanInput): SetupSignal {
     if (alignedCount < 3) notes.push(`Only ${alignedCount}/6 confluence points aligned — waiting for more`);
   }
 
-  return { direction, bias, biasFactors, confluence, alignedCount, notes };
+  return {
+    direction,
+    bias,
+    biasFactors,
+    confluence,
+    alignedCount,
+    biasTf,
+    recommendedStrikes: recommendStrikes(price, direction, alignedCount, input.strikeInterval ?? 50, input.symbol ?? ""),
+    notes,
+  };
 }

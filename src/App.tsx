@@ -68,7 +68,8 @@ export function App() {
     return localStorage.getItem("dhan_selectedSymbol") || "nifty";
   });
   const [selectedInterval, setSelectedInterval] = useState(() => {
-    return localStorage.getItem("dhan_selectedInterval") || "15";
+    const saved = localStorage.getItem("dhan_selectedInterval");
+    return saved && ["1", "5", "15", "30", "60"].includes(saved) ? saved : "15";
   });
 
   // Collapsible Sidebar States
@@ -756,7 +757,7 @@ export function App() {
                     <span>{selectedSymbol.toUpperCase()} Intraday Candlesticks (Auto-Date Normalization)</span>
                   </div>
                   <div style={{ display: "flex", gap: "6px" }}>
-                    {["1", "3", "5", "15", "30", "60"].map((m) => (
+                    {["1", "5", "15", "30", "60"].map((m) => (
                       <button
                         key={m}
                         onClick={() => setSelectedInterval(m)}

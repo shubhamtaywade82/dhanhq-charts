@@ -4,6 +4,58 @@ import { MarketDataService } from "./market-data.service";
 import { DhanRateLimiter } from "./dhan-rate-limiter.service";
 
 export class OptionChainService {
+  private static quoteCache: Record<string, { at: number; data: any }> = {};
+
+  /**
+   * Live premium quote for a single option strike (used by the paper-trading engine).
+   * Serves from a 5s in-memory cache; falls back to an error payload on failure
+   * (frontend then uses an estimated premium, clearly flagged as such).
+   */
+  public static async fetchLiveOptionQuote(symbol: string, strike: number, optionType: string): Promise<any> {
+    const key = `${symbol}|${strike}|${optionType}`;
+    const cached = this.quoteCache[key];
+    if (cached && Date.now() - cached.at < 5000) return cached.data;
+
+    const config = MarketDataService.getSymbolConfig(symbol);
+    const instrument = config.instrument === "EQUITY" ? "OPTSTK" : "OPTIDX";
+    const today = new Date().toISOString().slice(0, 10);
+
+    try {
+      const client = await DhanAuthService.getDhanClient();
+      const response: any = await DhanRateLimiter.execute(() =>
+        client.expiredOptionsData.fetch({
+          securityId: String(config.id),
+          exchangeSegment: "NSE_FNO",
+          instrument,
+          expiryFlag: "WEEK",
+          expiryCode: 1,
+          strike: String(strike),
+          drvOptionType: optionType === "CE" ? "CALL" : "PUT",
+          interval: "1",
+          requiredData: ["close", "spot"],
+          fromDate: today,
+          toDate: today,
+          autoAdjustDates: true,
+        })
+      );
+
+      const data = response?.ce || response?.pe || response || {};
+      const closeArr = data.close || data.c || [];
+      const lastClose = [...closeArr].reverse().find((v: number) => v > 0);
+      if (!lastClose) throw new Error("No premium data for strike");
+
+      const result = {
+        premium: Number(lastClose),
+        spot: Number(data.spot?.[data.spot.length - 1] || 0),
+        isMock: false,
+      };
+      this.quoteCache[key] = { at: Date.now(), data: result };
+      return result;
+    } catch (err: any) {
+      return { premium: 0, spot: 0, isMock: true, error: err.message };
+    }
+  }
+
   public static async fetchExpiredOptions(requestData: any): Promise<any> {
     const session = getMarketSessionInfo();
 
