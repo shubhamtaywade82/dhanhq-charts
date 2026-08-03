@@ -162,6 +162,20 @@ export interface ChartProps {
   tick?: any;
 }
 
+export interface IndicatorMeta {
+  label: string;
+  color: string;
+  icon?: string;
+  get: () => boolean;
+  set: (v: boolean) => void;
+}
+
+export interface IndicatorSetDef {
+  id: string;
+  label: string;
+  keys: string[];
+}
+
 // HTF bias ladder: only timeframes DhanHQ serves (1/5/15/30/60m) as bases
 const autoHtfMult = (baseMin: number): number => {
   const ladder: Record<number, number> = { 1: 5, 5: 3, 15: 4, 30: 2, 60: 4 };
@@ -572,6 +586,91 @@ export const TradingViewChart: React.FC<ChartProps> = ({
       try { localStorage.setItem("chart_show_setup_scan", String(next)); } catch {}
       return next;
     });
+  };
+
+  // ---- Indicator sets: grouped master toggles + independent per-indicator toggles ----
+  const persistIndicator = (key: string, value: boolean) => {
+    try { localStorage.setItem(key, String(value)); } catch {}
+  };
+
+  const INDICATORS: Record<string, IndicatorMeta> = {
+    sma20: {
+      label: "SMA 20", color: "#00E5FF",
+      get: () => indicatorVisibility.sma20,
+      set: (v) => { setIndicatorVisibility((prev) => { const next = { ...prev, sma20: v }; try { localStorage.setItem("chart_indicator_visibility", JSON.stringify(next)); } catch {} return next; }); },
+    },
+    ema9: {
+      label: "EMA 9", color: "#FFD700",
+      get: () => indicatorVisibility.ema9,
+      set: (v) => { setIndicatorVisibility((prev) => { const next = { ...prev, ema9: v }; try { localStorage.setItem("chart_indicator_visibility", JSON.stringify(next)); } catch {} return next; }); },
+    },
+    fvg: { label: "Fair Value Gaps (FVG)", color: "#00F5A0", get: () => showFVG, set: (v) => { persistIndicator("chart_show_fvg", v); setShowFVG(v); } },
+    ob: { label: "Order Blocks (OB)", color: "#FF495C", get: () => showOB, set: (v) => { persistIndicator("chart_show_ob", v); setShowOB(v); } },
+    structure: { label: "Market Structure (BOS/CHoCH)", color: "#00F5A0", get: () => showStructure, set: (v) => { persistIndicator("chart_show_structure", v); setShowStructure(v); } },
+    liquidity: { label: "Liquidity Pools (BSL/SSL)", color: "#00E5FF", get: () => showLiquidity, set: (v) => { persistIndicator("chart_show_liquidity", v); setShowLiquidity(v); } },
+    equilibrium: { label: "Equilibrium (P/D)", color: "#FFD700", get: () => showEquilibrium, set: (v) => { persistIndicator("chart_show_equilibrium", v); setShowEquilibrium(v); } },
+    ictSessions: { label: "ICT Kill Zones (Asia/LDN/NY)", color: "#9333EA", get: () => showICTSessions, set: (v) => { persistIndicator("chart_show_ict_sessions", v); setShowICTSessions(v); } },
+    silverBullet: { label: "Silver Bullet Windows", color: "#FFD700", icon: "🎯", get: () => showSilverBullet, set: (v) => { persistIndicator("chart_show_silver_bullet", v); setShowSilverBullet(v); } },
+    ote: { label: "Optimal Trade Entry (OTE)", color: "#00E5FF", icon: "⭐", get: () => showOTE, set: (v) => { persistIndicator("chart_show_ote", v); setShowOTE(v); } },
+    judas: { label: "Judas Swing Alerts", color: "#FF495C", icon: "⚡", get: () => showJudas, set: (v) => { persistIndicator("chart_show_judas", v); setShowJudas(v); } },
+    amd: { label: "AMD Power of 3 (A→M→D)", color: "#FFAA00", get: () => showAMD, set: (v) => { persistIndicator("chart_show_amd", v); setShowAMD(v); } },
+    sd: { label: "Supply & Demand Zones", color: "#00F5A0", get: () => showSD, set: (v) => { persistIndicator("chart_show_sd", v); setShowSD(v); } },
+    tl: { label: "Trendline Liquidity (S/R)", color: "#00F5A0", get: () => showTL, set: (v) => { persistIndicator("chart_show_tl", v); setShowTL(v); } },
+    cp: { label: "Candlestick Patterns", color: "#FFD700", icon: "🔨", get: () => showCP, set: (v) => { persistIndicator("chart_show_cp", v); setShowCP(v); } },
+  };
+
+  const INDICATOR_SETS: IndicatorSetDef[] = [
+    { id: "ma", label: "MOVING AVERAGES", keys: ["sma20", "ema9"] },
+    { id: "smc", label: "SMART MONEY CONCEPTS (SMC)", keys: ["fvg", "ob", "structure", "liquidity", "equilibrium"] },
+    { id: "ict", label: "ICT", keys: ["ictSessions", "silverBullet", "ote", "judas", "amd"] },
+    { id: "pa", label: "PRICE ACTION", keys: ["sd", "tl", "cp"] },
+  ];
+
+  const renderIndicatorSet = (set: IndicatorSetDef) => {
+    const onCount = set.keys.filter((k) => INDICATORS[k].get()).length;
+    const allOn = onCount === set.keys.length;
+    return (
+      <div key={set.id}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", fontSize: "10px", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.5px", borderBottom: "1px solid rgba(255,255,255,0.08)", paddingBottom: "4px", marginTop: "8px" }}>
+          <span>{set.label}</span>
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <span style={{ fontSize: "9px", fontWeight: 600, color: allOn ? "var(--accent-green)" : onCount > 0 ? "var(--accent-cyan)" : "var(--text-muted)" }}>
+              {onCount}/{set.keys.length}
+            </span>
+            <button
+              onClick={() => set.keys.forEach((k) => INDICATORS[k].set(!allOn))}
+              title={allOn ? `Hide all ${set.label}` : `Show all ${set.label}`}
+              style={{ background: "transparent", border: "none", color: allOn ? "var(--accent-green)" : "var(--text-muted)", cursor: "pointer", display: "flex", alignItems: "center", padding: "2px" }}
+            >
+              {allOn ? <Eye size={12} /> : <EyeOff size={12} />}
+            </button>
+          </div>
+        </div>
+        {set.keys.map((k) => {
+          const meta = INDICATORS[k];
+          const on = meta.get();
+          return (
+            <div key={k} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "2px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                {meta.icon ? (
+                  <span style={{ fontSize: "11px" }}>{meta.icon}</span>
+                ) : (
+                  <span style={{ width: "8px", height: "8px", borderRadius: "2px", background: meta.color }} />
+                )}
+                <span style={{ fontSize: "11px", fontWeight: 600, color: on ? "#FFFFFF" : "var(--text-muted)" }}>{meta.label}</span>
+              </div>
+              <button
+                onClick={() => meta.set(!on)}
+                title={on ? `Hide ${meta.label}` : `Show ${meta.label}`}
+                style={{ background: "transparent", border: "none", color: on ? meta.color : "var(--text-muted)", cursor: "pointer", display: "flex", alignItems: "center", padding: "2px" }}
+              >
+                {on ? <Eye size={13} /> : <EyeOff size={13} />}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    );
   };
 
   // MTF bias timeframe: AUTO uses the DhanHQ ladder, otherwise a multiple of the base interval
@@ -1842,7 +1941,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
     if (livePrice === undefined || livePrice === null || !seriesRef.current || !lastCandleValRef.current) return;
 
     targetPriceRef.current = livePrice;
-    targetVolumeRef.current = (lastCandleValRef.current?.volume || 5000) + Math.floor(Math.random() * 50);
+    targetVolumeRef.current = lastCandleValRef.current?.volume || 0;
 
     if (currentVisualPriceRef.current === null) {
       currentVisualPriceRef.current = livePrice;
@@ -2123,56 +2222,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
                 boxShadow: "0 8px 24px rgba(0, 0, 0, 0.5)",
                 minWidth: "190px",
               }}>
-                <div style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.5px", borderBottom: "1px solid rgba(255, 255, 255, 0.08)", paddingBottom: "4px" }}>
-                  OVERLAY INDICATORS
-                </div>
-
-                {/* 1. SMA 20 TOGGLE */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#00E5FF" }} />
-                    <span style={{ fontSize: "11px", fontWeight: 600, color: indicatorVisibility.sma20 ? "#FFFFFF" : "var(--text-muted)" }}>SMA 20</span>
-                  </div>
-                  <button
-                    onClick={() => toggleIndicator("sma20")}
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      color: indicatorVisibility.sma20 ? "var(--accent-cyan)" : "var(--text-muted)",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      padding: "2px",
-                    }}
-                    title={indicatorVisibility.sma20 ? "Hide SMA 20" : "Show SMA 20"}
-                  >
-                    {indicatorVisibility.sma20 ? <Eye size={13} /> : <EyeOff size={13} />}
-                  </button>
-                </div>
-
-                {/* 2. EMA 9 TOGGLE */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#FFD700" }} />
-                    <span style={{ fontSize: "11px", fontWeight: 600, color: indicatorVisibility.ema9 ? "#FFFFFF" : "var(--text-muted)" }}>EMA 9</span>
-                  </div>
-                  <button
-                    onClick={() => toggleIndicator("ema9")}
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      color: indicatorVisibility.ema9 ? "#FFD700" : "var(--text-muted)",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      padding: "2px",
-                    }}
-                    title={indicatorVisibility.ema9 ? "Hide EMA 9" : "Show EMA 9"}
-                  >
-                    {indicatorVisibility.ema9 ? <Eye size={13} /> : <EyeOff size={13} />}
-                  </button>
-                </div>
-
+                {renderIndicatorSet(INDICATOR_SETS[0])}
                 <div style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.5px", borderBottom: "1px solid rgba(255, 255, 255, 0.08)", paddingBottom: "4px", marginTop: "6px" }}>
                   CANDLE & VOLUME THEME
                 </div>
@@ -2209,314 +2259,9 @@ export const TradingViewChart: React.FC<ChartProps> = ({
                 </div>
 
                 <div style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.5px", borderBottom: "1px solid rgba(255, 255, 255, 0.08)", paddingBottom: "4px", marginTop: "8px" }}>
-                  SMART MONEY CONCEPTS (SMC)
-                </div>
-
-                {/* 1. Fair Value Gaps (FVG) */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "2px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    <Layers size={12} color="#00F5A0" />
-                    <span style={{ fontSize: "11px", fontWeight: 600, color: showFVG ? "#FFFFFF" : "var(--text-muted)" }}>
-                      Fair Value Gaps (FVG)
-                    </span>
-                  </div>
-                  <button
-                    onClick={toggleFVG}
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      color: showFVG ? "var(--accent-green)" : "var(--text-muted)",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      padding: "2px",
-                    }}
-                    title={showFVG ? "Hide Fair Value Gaps" : "Show Fair Value Gaps"}
-                  >
-                    {showFVG ? <Eye size={13} /> : <EyeOff size={13} />}
-                  </button>
-                </div>
-
-                {/* 2. Order Blocks (OB) */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "4px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    <span style={{ width: "8px", height: "8px", borderRadius: "2px", background: "#FF495C" }} />
-                    <span style={{ fontSize: "11px", fontWeight: 600, color: showOB ? "#FFFFFF" : "var(--text-muted)" }}>
-                      Order Blocks (OB)
-                    </span>
-                  </div>
-                  <button
-                    onClick={toggleOB}
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      color: showOB ? "#FF495C" : "var(--text-muted)",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      padding: "2px",
-                    }}
-                    title={showOB ? "Hide Order Blocks" : "Show Order Blocks"}
-                  >
-                    {showOB ? <Eye size={13} /> : <EyeOff size={13} />}
-                  </button>
-                </div>
-
-                {/* 3. Market Structure (BOS / CHoCH) */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "4px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    <span style={{ width: "8px", height: "2px", background: "#00F5A0" }} />
-                    <span style={{ fontSize: "11px", fontWeight: 600, color: showStructure ? "#FFFFFF" : "var(--text-muted)" }}>
-                      Structure (BOS / CHoCH)
-                    </span>
-                  </div>
-                  <button
-                    onClick={toggleStructure}
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      color: showStructure ? "#00F5A0" : "var(--text-muted)",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      padding: "2px",
-                    }}
-                    title={showStructure ? "Hide Market Structure" : "Show Market Structure"}
-                  >
-                    {showStructure ? <Eye size={13} /> : <EyeOff size={13} />}
-                  </button>
-                </div>
-
-                {/* 4. Liquidity Pools & Sweeps (BSL / SSL) */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "4px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    <span style={{ width: "8px", height: "2px", background: "#00E5FF" }} />
-                    <span style={{ fontSize: "11px", fontWeight: 600, color: showLiquidity ? "#FFFFFF" : "var(--text-muted)" }}>
-                      Liquidity (BSL / SSL)
-                    </span>
-                  </div>
-                  <button
-                    onClick={toggleLiquidity}
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      color: showLiquidity ? "var(--accent-cyan)" : "var(--text-muted)",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      padding: "2px",
-                    }}
-                    title={showLiquidity ? "Hide Liquidity Pools & Sweeps" : "Show Liquidity Pools & Sweeps"}
-                  >
-                    {showLiquidity ? <Eye size={13} /> : <EyeOff size={13} />}
-                  </button>
-                </div>
-
-                {/* 5. ICT Sessions & Kill Zones (Asia, London, NY) */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "4px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    <span style={{ width: "8px", height: "8px", borderRadius: "2px", background: "#9333EA" }} />
-                    <span style={{ fontSize: "11px", fontWeight: 600, color: showICTSessions ? "#FFFFFF" : "var(--text-muted)" }}>
-                      ICT Kill Zones (Asia/LDN/NY)
-                    </span>
-                  </div>
-                  <button
-                    onClick={toggleICTSessions}
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      color: showICTSessions ? "#9333EA" : "var(--text-muted)",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      padding: "2px",
-                    }}
-                    title={showICTSessions ? "Hide ICT Kill Zones" : "Show ICT Kill Zones"}
-                  >
-                    {showICTSessions ? <Eye size={13} /> : <EyeOff size={13} />}
-                  </button>
-                </div>
-
-                {/* 6. ICT Silver Bullet (1-Hr Windows) */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "4px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    <span style={{ width: "8px", height: "8px", borderRadius: "2px", background: "#FFD700" }} />
-                    <span style={{ fontSize: "11px", fontWeight: 600, color: showSilverBullet ? "#FFFFFF" : "var(--text-muted)" }}>
-                      Silver Bullet (1-Hr Windows 🎯)
-                    </span>
-                  </div>
-                  <button
-                    onClick={toggleSilverBullet}
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      color: showSilverBullet ? "#FFD700" : "var(--text-muted)",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      padding: "2px",
-                    }}
-                    title={showSilverBullet ? "Hide Silver Bullet Windows" : "Show Silver Bullet Windows"}
-                  >
-                    {showSilverBullet ? <Eye size={13} /> : <EyeOff size={13} />}
-                  </button>
-                </div>
-
-                {/* 7. ICT Optimal Trade Entry (OTE Zone 0.705 ⭐) */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "4px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    <span style={{ width: "8px", height: "2px", background: "#00E5FF" }} />
-                    <span style={{ fontSize: "11px", fontWeight: 600, color: showOTE ? "#FFFFFF" : "var(--text-muted)" }}>
-                      Optimal Trade Entry (OTE ⭐)
-                    </span>
-                  </div>
-                  <button
-                    onClick={toggleOTE}
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      color: showOTE ? "var(--accent-cyan)" : "var(--text-muted)",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      padding: "2px",
-                    }}
-                    title={showOTE ? "Hide Optimal Trade Entry Zone" : "Show Optimal Trade Entry Zone"}
-                  >
-                    {showOTE ? <Eye size={13} /> : <EyeOff size={13} />}
-                  </button>
-                </div>
-
-                {/* 8. ICT Judas Swing Alerts (Fakeout Traps ⚡) */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "4px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    <span style={{ width: "8px", height: "8px", borderRadius: "2px", background: "#FF495C" }} />
-                    <span style={{ fontSize: "11px", fontWeight: 600, color: showJudas ? "#FFFFFF" : "var(--text-muted)" }}>
-                      Judas Swing Alerts ⚡
-                    </span>
-                  </div>
-                  <button
-                    onClick={toggleJudas}
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      color: showJudas ? "#FF495C" : "var(--text-muted)",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      padding: "2px",
-                    }}
-                    title={showJudas ? "Hide Judas Swing Alerts" : "Show Judas Swing Alerts"}
-                  >
-                    {showJudas ? <Eye size={13} /> : <EyeOff size={13} />}
-                  </button>
-                </div>
-
-                {/* 9. ICT AMD Power of 3 (Accumulation → Manipulation → Distribution) */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "4px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    <span style={{ width: "8px", height: "8px", borderRadius: "2px", background: "#FFAA00" }} />
-                    <span style={{ fontSize: "11px", fontWeight: 600, color: showAMD ? "#FFFFFF" : "var(--text-muted)" }}>
-                      AMD Power of 3 (A→M→D)
-                    </span>
-                  </div>
-                  <button
-                    onClick={toggleAMD}
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      color: showAMD ? "#FFAA00" : "var(--text-muted)",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      padding: "2px",
-                    }}
-                    title={showAMD ? "Hide AMD Power of 3 Cycles" : "Show AMD Power of 3 Cycles"}
-                  >
-                    {showAMD ? <Eye size={13} /> : <EyeOff size={13} />}
-                  </button>
-                </div>
-
-                <div style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.5px", borderBottom: "1px solid rgba(255, 255, 255, 0.08)", paddingBottom: "4px", marginTop: "8px" }}>
-                  PRICE ACTION
-                </div>
-
-                {/* 10. Supply & Demand Zones (Fresh / Tested) */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "4px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    <span style={{ width: "8px", height: "8px", borderRadius: "2px", background: "#00F5A0" }} />
-                    <span style={{ fontSize: "11px", fontWeight: 600, color: showSD ? "#FFFFFF" : "var(--text-muted)" }}>
-                      Supply & Demand Zones
-                    </span>
-                  </div>
-                  <button
-                    onClick={toggleSD}
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      color: showSD ? "#00F5A0" : "var(--text-muted)",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      padding: "2px",
-                    }}
-                    title={showSD ? "Hide Supply & Demand Zones" : "Show Supply & Demand Zones"}
-                  >
-                    {showSD ? <Eye size={13} /> : <EyeOff size={13} />}
-                  </button>
-                </div>
-
-                {/* 11. Trendline Liquidity (Diagonal S/R lines with touch count) */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "4px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    <span style={{ width: "12px", height: "2px", background: "#00F5A0", borderRadius: "1px" }} />
-                    <span style={{ fontSize: "11px", fontWeight: 600, color: showTL ? "#FFFFFF" : "var(--text-muted)" }}>
-                      Trendline Liquidity (S/R)
-                    </span>
-                  </div>
-                  <button
-                    onClick={toggleTL}
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      color: showTL ? "#00F5A0" : "var(--text-muted)",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      padding: "2px",
-                    }}
-                    title={showTL ? "Hide Trendline Liquidity" : "Show Trendline Liquidity"}
-                  >
-                    {showTL ? <Eye size={13} /> : <EyeOff size={13} />}
-                  </button>
-                </div>
-
-                {/* 12. Candlestick Reversal Patterns (Pinbar / Engulfing / Inside Bar) */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "4px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    <span style={{ fontSize: "11px" }}>🔨</span>
-                    <span style={{ fontSize: "11px", fontWeight: 600, color: showCP ? "#FFFFFF" : "var(--text-muted)" }}>
-                      Candlestick Patterns
-                    </span>
-                  </div>
-                  <button
-                    onClick={toggleCP}
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      color: showCP ? "#FFD700" : "var(--text-muted)",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      padding: "2px",
-                    }}
-                    title={showCP ? "Hide Candlestick Patterns" : "Show Candlestick Patterns"}
-                  >
-                    {showCP ? <Eye size={13} /> : <EyeOff size={13} />}
-                  </button>
-                </div>
-
-                <div style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.5px", borderBottom: "1px solid rgba(255, 255, 255, 0.08)", paddingBottom: "4px", marginTop: "8px" }}>
+                {renderIndicatorSet(INDICATOR_SETS[1])}
+                {renderIndicatorSet(INDICATOR_SETS[2])}
+                {renderIndicatorSet(INDICATOR_SETS[3])}
                   CANDLE BODY STYLE
                 </div>
 
