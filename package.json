@@ -13,7 +13,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@shubhamtaywade82/dhanhq-ts": "^0.3.0",
+    "@shubhamtaywade82/dhanhq-ts": "^0.4.1",
     "axios": "^1.13.6",
     "cors": "^2.8.5",
     "dotenv": "^17.3.1",
