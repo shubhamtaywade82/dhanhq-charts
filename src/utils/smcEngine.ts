@@ -805,3 +805,147 @@ export function detectCandlestickPatterns(candles: CandleData[]): CandlestickPat
   // Return last 8 patterns only (avoid chart clutter)
   return patterns.slice(-8);
 }
+
+export interface PriceBucket {
+  priceLevel: number;
+  priceTop: number;
+  priceBottom: number;
+  buyVolume: number;
+  sellVolume: number;
+  totalVolume: number;
+  isValueArea: boolean;
+}
+
+export interface VolumeProfileResult {
+  buckets: PriceBucket[];
+  pocPrice: number;
+  pocVolume: number;
+  vahPrice: number;
+  valPrice: number;
+  maxBucketVolume: number;
+  totalVolume: number;
+  highVolumeNodes: number[];
+  lowVolumeNodes: number[];
+}
+
+export function detectVolumeProfile(
+  candles: CandleData[],
+  bucketCount: number = 32,
+  valueAreaPct: number = 0.70
+): VolumeProfileResult | null {
+  if (!candles || candles.length === 0) return null;
+
+  let minLow = Infinity;
+  let maxHigh = -Infinity;
+  let totalVolume = 0;
+
+  for (const c of candles) {
+    if (c.low < minLow) minLow = c.low;
+    if (c.high > maxHigh) maxHigh = c.high;
+    totalVolume += c.volume || 0;
+  }
+
+  if (minLow >= maxHigh || totalVolume === 0) return null;
+
+  const step = (maxHigh - minLow) / bucketCount;
+  const buckets: PriceBucket[] = [];
+
+  for (let i = 0; i < bucketCount; i++) {
+    const pBottom = minLow + i * step;
+    const pTop = minLow + (i + 1) * step;
+    buckets.push({
+      priceLevel: (pBottom + pTop) / 2,
+      priceTop: pTop,
+      priceBottom: pBottom,
+      buyVolume: 0,
+      sellVolume: 0,
+      totalVolume: 0,
+      isValueArea: false,
+    });
+  }
+
+  for (const c of candles) {
+    const vol = c.volume || 0;
+    if (vol === 0) continue;
+
+    const isBuy = c.close >= c.open;
+    const cLow = Math.max(minLow, c.low);
+    const cHigh = Math.min(maxHigh, c.high);
+    const cSpan = Math.max(step * 0.1, cHigh - cLow);
+
+    for (const b of buckets) {
+      const overlapStart = Math.max(b.priceBottom, cLow);
+      const overlapEnd = Math.min(b.priceTop, cHigh);
+      if (overlapEnd > overlapStart) {
+        const fraction = (overlapEnd - overlapStart) / cSpan;
+        const portion = vol * fraction;
+        if (isBuy) {
+          b.buyVolume += portion;
+        } else {
+          b.sellVolume += portion;
+        }
+        b.totalVolume += portion;
+      }
+    }
+  }
+
+  // Find POC (Point of Control)
+  let pocIdx = 0;
+  let maxVol = 0;
+  buckets.forEach((b, idx) => {
+    if (b.totalVolume > maxVol) {
+      maxVol = b.totalVolume;
+      pocIdx = idx;
+    }
+  });
+
+  const pocPrice = buckets[pocIdx]?.priceLevel || (minLow + maxHigh) / 2;
+
+  // Compute Value Area (70% Volume around POC)
+  const targetVaVol = totalVolume * valueAreaPct;
+  let accumulatedVol = buckets[pocIdx]?.totalVolume || 0;
+  buckets[pocIdx].isValueArea = true;
+
+  let upIdx = pocIdx + 1;
+  let downIdx = pocIdx - 1;
+
+  while (accumulatedVol < targetVaVol && (upIdx < bucketCount || downIdx >= 0)) {
+    const upVol = upIdx < bucketCount ? buckets[upIdx].totalVolume : -1;
+    const downVol = downIdx >= 0 ? buckets[downIdx].totalVolume : -1;
+
+    if (upVol >= downVol && upIdx < bucketCount) {
+      accumulatedVol += upVol;
+      buckets[upIdx].isValueArea = true;
+      upIdx++;
+    } else if (downIdx >= 0) {
+      accumulatedVol += downVol;
+      buckets[downIdx].isValueArea = true;
+      downIdx--;
+    } else if (upIdx < bucketCount) {
+      accumulatedVol += upVol;
+      buckets[upIdx].isValueArea = true;
+      upIdx++;
+    }
+  }
+
+  const vaBuckets = buckets.filter((b) => b.isValueArea);
+  const vahPrice = vaBuckets.length > 0 ? Math.max(...vaBuckets.map((b) => b.priceTop)) : maxHigh;
+  const valPrice = vaBuckets.length > 0 ? Math.min(...vaBuckets.map((b) => b.priceBottom)) : minLow;
+
+  // High Volume Nodes (HVN) & Low Volume Nodes (LVN)
+  const avgVol = totalVolume / bucketCount;
+  const highVolumeNodes = buckets.filter((b) => b.totalVolume > avgVol * 1.5).map((b) => b.priceLevel);
+  const lowVolumeNodes = buckets.filter((b) => b.totalVolume < avgVol * 0.35 && b.totalVolume > 0).map((b) => b.priceLevel);
+
+  return {
+    buckets,
+    pocPrice,
+    pocVolume: maxVol,
+    vahPrice,
+    valPrice,
+    maxBucketVolume: maxVol || 1,
+    totalVolume,
+    highVolumeNodes,
+    lowVolumeNodes,
+  };
+}

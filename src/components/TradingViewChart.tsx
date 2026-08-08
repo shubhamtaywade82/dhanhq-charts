@@ -6,7 +6,7 @@ import {
   LineSeries,
   HistogramSeries,
 } from "lightweight-charts";
-import { Clock, Eye, EyeOff, ChevronDown, ChevronUp, Sliders, Layers } from "lucide-react";
+import { Clock, Eye, EyeOff, ChevronDown, ChevronUp, Sliders, Layers, Palette } from "lucide-react";
 import {
   detectFVGs,
   detectOrderBlocks,
@@ -25,6 +25,8 @@ import {
   TrendlineLiquidity,
   CandlestickPattern,
   CandlestickPatternType,
+  detectVolumeProfile,
+  VolumeProfileResult,
 } from "../utils/smcEngine";
 import {
   detectICTSessions,
@@ -151,6 +153,73 @@ export const CANDLE_THEMES: Record<string, CandleTheme> = {
     volDownColor: "rgba(67, 70, 81, 0.5)",
     priceLineColor: "#FFFFFF",
   },
+};
+
+export function getPricePrecision(price: number): { precision: number; minMove: number } {
+  const abs = Math.abs(price);
+  if (abs === 0) return { precision: 2, minMove: 0.01 };
+  if (abs >= 1000) return { precision: 2, minMove: 0.01 };
+  if (abs >= 10) return { precision: 2, minMove: 0.01 };
+  if (abs >= 1) return { precision: 4, minMove: 0.0001 };
+  if (abs >= 0.01) return { precision: 4, minMove: 0.0001 };
+  if (abs >= 0.001) return { precision: 5, minMove: 0.00001 };
+  if (abs >= 0.0001) return { precision: 6, minMove: 0.000001 };
+  return { precision: 7, minMove: 0.0000001 };
+}
+
+export function formatPriceDynamic(price: number, precision: number): string {
+  return price.toFixed(precision);
+}
+
+export const sanitizeAndSortCandles = (raw: any[]): any[] => {
+  if (!Array.isArray(raw)) return [];
+  const valid = raw
+    .filter((c) => c && typeof c.time === "number" && !isNaN(c.time) && c.time > 0)
+    .map((c) => ({
+      time: Math.floor(Number(c.time)),
+      open: Number(c.open || 0),
+      high: Number(c.high || 0),
+      low: Number(c.low || 0),
+      close: Number(c.close || 0),
+      volume: Number(c.volume || 0),
+    }));
+
+  const map = new Map<number, any>();
+  for (const c of valid) {
+    map.set(c.time, c);
+  }
+  const sorted = Array.from(map.values()).sort((a, b) => a.time - b.time);
+  return fillCandleGaps(sorted);
+};
+
+export const fillCandleGaps = (sorted: any[]): any[] => {
+  if (sorted.length < 2) return sorted;
+  const gaps: number[] = [];
+  for (let i = 1; i < Math.min(sorted.length, 50); i++) {
+    gaps.push(sorted[i].time - sorted[i - 1].time);
+  }
+  gaps.sort((a, b) => a - b);
+  const intervalSecs = gaps[Math.floor(gaps.length / 2)];
+  if (!intervalSecs || intervalSecs <= 0) return sorted;
+  const snapped = sorted.map((c) => ({ ...c, time: Math.round(c.time / intervalSecs) * intervalSecs }));
+  const snapMap = new Map<number, any>();
+  for (const c of snapped) { if (!snapMap.has(c.time)) snapMap.set(c.time, c); }
+  const deduped = Array.from(snapMap.values()).sort((a, b) => a.time - b.time);
+  const result: any[] = [deduped[0]];
+  for (let i = 1; i < deduped.length; i++) {
+    const prev = deduped[i - 1];
+    const curr = deduped[i];
+    const gap = curr.time - prev.time;
+    if (gap > intervalSecs * 1.1) {
+      let t = prev.time + intervalSecs;
+      while (t < curr.time - intervalSecs * 0.5) {
+        result.push({ time: t, open: prev.close, high: prev.close, low: prev.close, close: prev.close, volume: 0 });
+        t += intervalSecs;
+      }
+    }
+    result.push(curr);
+  }
+  return result;
 };
 
 export interface ChartProps {
@@ -1937,21 +2006,19 @@ export const TradingViewChart: React.FC<ChartProps> = ({
   }, [symbol, interval, showIndicators, customCandles]);
 
   // 3. 60 FPS LERP Animation Loop for Smooth Price Line & Volume Bar Transitions
+  // Update target price on livePrice prop changes without resetting RAF loop
   useEffect(() => {
-    if (livePrice === undefined || livePrice === null || !seriesRef.current || !lastCandleValRef.current) return;
-
-    targetPriceRef.current = livePrice;
-    targetVolumeRef.current = lastCandleValRef.current?.volume || 0;
-
-    if (currentVisualPriceRef.current === null) {
-      currentVisualPriceRef.current = livePrice;
+    if (livePrice !== undefined && livePrice !== null) {
+      targetPriceRef.current = livePrice;
+      if (currentVisualPriceRef.current === null) {
+        currentVisualPriceRef.current = livePrice;
+      }
     }
-    if (currentVisualVolumeRef.current === null) {
-      currentVisualVolumeRef.current = targetVolumeRef.current;
-    }
+  }, [livePrice]);
 
+  // 3. 60 FPS LERP Animation Loop for Smooth Price Line & Volume Bar Transitions
+  useEffect(() => {
     const barSeconds = (parseInt(interval, 10) || 15) * 60;
-
     let animId: number;
 
     const animateLerp = () => {
@@ -1967,15 +2034,15 @@ export const TradingViewChart: React.FC<ChartProps> = ({
 
         const rawTargetLtp = targetPriceRef.current;
 
-        // Smooth 60 FPS LERP Interpolation for price line visual gliding
+        // Smooth 60 FPS LERP Interpolation (alpha = 0.08 for ~250ms visual gliding)
         const priceDiff = rawTargetLtp - currentVisualPriceRef.current;
-        if (Math.abs(priceDiff) > 0.01) {
-          currentVisualPriceRef.current += priceDiff * 0.20;
+        if (Math.abs(priceDiff) > 0.0001) {
+          currentVisualPriceRef.current += priceDiff * 0.08;
         } else {
           currentVisualPriceRef.current = rawTargetLtp;
         }
 
-        const displayPrice = Number(currentVisualPriceRef.current.toFixed(2));
+        const displayPrice = currentVisualPriceRef.current;
 
         // Bar Boundary Protection: Lock closed candle & start NEW forming candle
         if (lastBarTime > 0 && targetBarTime >= lastBarTime + barSeconds) {
@@ -2035,17 +2102,17 @@ export const TradingViewChart: React.FC<ChartProps> = ({
             }, 2500);
           } catch (e) {}
         } else {
-          // Update active forming candle smoothly while evaluating high/low strictly on rawTargetLtp
+          // Update active forming candle smoothly: high/low expand gradually with displayPrice
           const activeCandle = { ...lastCandleValRef.current };
           activeCandle.close = displayPrice;
-          activeCandle.high = Math.max(activeCandle.high ?? rawTargetLtp, rawTargetLtp);
-          activeCandle.low = Math.min(activeCandle.low ?? rawTargetLtp, rawTargetLtp);
+          activeCandle.high = Math.max(activeCandle.high ?? displayPrice, displayPrice);
+          activeCandle.low = Math.min(activeCandle.low ?? displayPrice, displayPrice);
 
-          // Volume LERP Step: smooth alpha = 0.18
+          // Volume LERP Step: smooth alpha = 0.08
           if (targetVolumeRef.current !== null && currentVisualVolumeRef.current !== null) {
             const volDiff = targetVolumeRef.current - currentVisualVolumeRef.current;
             if (Math.abs(volDiff) > 0.1) {
-              currentVisualVolumeRef.current += volDiff * 0.18;
+              currentVisualVolumeRef.current += volDiff * 0.08;
             } else {
               currentVisualVolumeRef.current = targetVolumeRef.current;
             }
@@ -2078,7 +2145,7 @@ export const TradingViewChart: React.FC<ChartProps> = ({
 
     animId = requestAnimationFrame(animateLerp);
     return () => cancelAnimationFrame(animId);
-  }, [livePrice, interval, tick]);
+  }, [interval, symbol]);
 
   const activeLtp = livePrice || tick?.ltp || (lastCandleValRef.current?.close || 24263.40);
   const activeChange = tick?.change !== undefined ? tick.change : 13.85;

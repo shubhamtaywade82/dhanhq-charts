@@ -25,6 +25,7 @@ interface TickPayload {
 export class WebSocketFeedService {
   private static wsReady: Promise<any> | null = null;
   private static depthBySymbol: Map<string, DepthBook> = new Map();
+  private static subscriberCounts: Map<string, number> = new Map();
 
   /** Lazily connect the Dhan market feed once; wire tick + depth handlers. */
   private static async getWiredClient(): Promise<any> {
@@ -32,6 +33,11 @@ export class WebSocketFeedService {
       this.wsReady = (async () => {
         const client = await DhanAuthService.getDhanClient();
         const ws = client.ws;
+
+        if (ws) {
+          ws.on?.("error", (e: any) => console.warn("⚠️ Dhan Market WS notice:", e?.message || e));
+          ws.orders?.on?.("error", (e: any) => console.warn("⚠️ Dhan Order WS notice:", e?.message || e));
+        }
 
         ws.market.on("tick", (tick: TickPayload) => {
           const config = MarketDataService.getSymbolConfigById(tick.securityId);
@@ -75,23 +81,39 @@ export class WebSocketFeedService {
   }
 
   private static async subscribeInstrument(instrument: { securityId: string; exchangeSegment: string }): Promise<void> {
-    try {
-      const client = await this.getWiredClient();
-      client.ws.market.subscribe([instrument]);
-      if (client.ws.depth) {
-        client.ws.depth.subscribe([instrument]);
-      }
-    } catch (e) {}
+    const key = instrument.securityId;
+    const currentCount = this.subscriberCounts.get(key) || 0;
+    this.subscriberCounts.set(key, currentCount + 1);
+
+    if (currentCount === 0) {
+      try {
+        const client = await this.getWiredClient();
+        client.ws.market.subscribe([instrument]);
+        if (client.ws.depth) {
+          client.ws.depth.subscribe([instrument]);
+        }
+      } catch (e) {}
+    }
   }
 
   private static async unsubscribeInstrument(instrument: { securityId: string; exchangeSegment: string }): Promise<void> {
-    try {
-      const client = await this.getWiredClient();
-      client.ws.market.unsubscribe([instrument]);
-      if (client.ws.depth) {
-        client.ws.depth.unsubscribe([instrument]);
-      }
-    } catch (e) {}
+    const key = instrument.securityId;
+    const currentCount = this.subscriberCounts.get(key) || 1;
+    const newCount = currentCount - 1;
+
+    if (newCount <= 0) {
+      this.subscriberCounts.delete(key);
+      this.depthBySymbol.delete(key);
+      try {
+        const client = await this.getWiredClient();
+        client.ws.market.unsubscribe([instrument]);
+        if (client.ws.depth) {
+          client.ws.depth.unsubscribe([instrument]);
+        }
+      } catch (e) {}
+    } else {
+      this.subscriberCounts.set(key, newCount);
+    }
   }
 
   public static attach(wss: WebSocketServer): void {
@@ -111,8 +133,6 @@ export class WebSocketFeedService {
         const depth = this.depthBySymbol.get(activeConfig.id);
         const now = Date.now();
 
-        // Only push a tick when the real price changed, or when the order book
-        // refreshed (so the depth panel stays live without moving the price line).
         const priceChanged = currentPrice !== lastSentPrice;
         const depthRefreshed = depth !== undefined && now - lastDepthSentAt > 1000;
         if (!priceChanged && !depthRefreshed) return;

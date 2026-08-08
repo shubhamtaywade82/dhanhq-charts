@@ -7,7 +7,7 @@
     "dev": "vite",
     "backend": "tsx server/index.ts",
     "proxy": "tsx server/index.ts",
-    "dev:all": "tsx server/index.ts & vite",
+    "dev:all": "node scripts/dev-all.mjs",
     "start": "tsx server/index.ts",
     "build": "tsc && vite build",
     "preview": "vite preview"

@@ -13,6 +13,8 @@ export interface SymbolConfig {
 }
 
 export class MarketDataService {
+  private static isSyncing = false;
+
   /** Seed values are zeros — real prices arrive from the 5s Dhan intraday sync / live market feed. */
   public static SYMBOL_MAP: Record<string, SymbolConfig> = {
     nifty: { id: "13", segment: "IDX_I", instrument: "INDEX", name: "NIFTY 50", basePrice: 0, prevClose: 0, dayVolume: 0 },
@@ -38,6 +40,8 @@ export class MarketDataService {
    * using DhanRateLimiter with paced request intervals to prevent HTTP 429 errors.
    */
   public static async syncRealDhanSpotPrices(): Promise<void> {
+    if (this.isSyncing) return;
+    this.isSyncing = true;
     try {
       const client = await DhanAuthService.getDhanClient();
       // Primary active indices to sync continuously
@@ -80,14 +84,16 @@ export class MarketDataService {
       }
     } catch (err: any) {
       console.warn("⚠️ Spot sync error:", err.message);
+    } finally {
+      this.isSyncing = false;
     }
   }
 
   public static async fetchIntradayCandles(symbolKey: string, intervalStr: string): Promise<any> {
-    const client = await DhanAuthService.getDhanClient();
     const config = this.getSymbolConfig(symbolKey);
 
     try {
+      const client = await DhanAuthService.getDhanClient();
       const data: any = await DhanRateLimiter.execute(() =>
         client.charts.intraday({
           securityId: config.id,
@@ -170,7 +176,6 @@ export class MarketDataService {
    * DhanHQ intraday endpoint max window = 90 days.
    */
   public static async fetchHistoricalCandles(symbolKey: string, fromDate?: string, toDate?: string, interval: string = "15"): Promise<any> {
-    const client = await DhanAuthService.getDhanClient();
     const config = this.getSymbolConfig(symbolKey);
 
     // Clamp window to max 90 days (DhanHQ intraday limit)
@@ -191,6 +196,7 @@ export class MarketDataService {
     const to = fmt(toObj);
 
     try {
+      const client = await DhanAuthService.getDhanClient();
       const data: any = await DhanRateLimiter.execute(() =>
         client.charts.intraday({
           securityId: config.id,

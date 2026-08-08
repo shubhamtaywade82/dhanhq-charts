@@ -2,6 +2,8 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import http from "http";
+import net from "net";
+import fs from "fs";
 import { WebSocketServer } from "ws";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -14,6 +16,14 @@ const __dirname = path.dirname(__filename);
 
 dotenv.config({ path: path.join(__dirname, "../../.env") });
 dotenv.config({ path: path.join(__dirname, "../.env") });
+
+process.on("uncaughtException", (err) => {
+  console.warn("⚠️ Uncaught exception notice:", err?.message || err);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.warn("⚠️ Unhandled promise rejection notice:", reason);
+});
 
 const app = express();
 app.use(cors());
@@ -45,7 +55,25 @@ app.get("*", (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 3001;
+const PROJECT_ROOT = path.join(__dirname, "..");
+
+async function findFreePort(start: number, maxTries = 20): Promise<number> {
+  for (let port = start; port < start + maxTries; port++) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const tester = net.createServer();
+        tester.once("error", reject);
+        tester.listen(port, () => tester.close(() => resolve()));
+      });
+      return port;
+    } catch {}
+  }
+  throw new Error(`No free port found in range ${start}-${start + maxTries}`);
+}
+
+const PORT = await findFreePort(Number(process.env.PORT) || 3001);
+fs.writeFileSync(path.join(PROJECT_ROOT, ".backend-port"), String(PORT));
+
 server.listen(PORT, () => {
   console.log(`🚀 Dedicated DhanHQ Options Trading Backend Server running at http://localhost:${PORT}`);
   console.log(`📦 Powered by @shubhamtaywade82/dhanhq-ts v0.3.0`);
